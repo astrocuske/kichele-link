@@ -107,7 +107,9 @@
 				{#each gigs as gig}
 					<article class="rounded-xl bg-white p-6 shadow-sm">
 						<div class="flex items-start justify-between gap-4">
-							<h3 class="text-xl font-semibold text-gray-900">{gig.title}</h3>
+							<h3 class="text-xl font-semibold text-gray-900">
+								{gig.title}
+							</h3>
 
 							{#if gig.budget !== null}
 								<span class="whitespace-nowrap font-semibold text-gray-900">
@@ -129,7 +131,7 @@
 						</p>
 
 						<a
-							href={`/gigs/${gig.id}/apply`}
+							href={`/gigs/${gig.id}`}
 							class="mt-5 inline-block rounded-lg bg-black px-5 py-3 font-medium text-white hover:bg-gray-800"
 						>
 							Apply

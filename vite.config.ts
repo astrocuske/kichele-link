@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
@@ -20,6 +21,11 @@ export default defineConfig({
 			adapter: adapter()
 		})
 	],
+	resolve: {
+    alias: {
+        $lib: resolve('./src/lib')
+    }
+},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

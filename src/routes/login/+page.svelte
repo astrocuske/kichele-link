@@ -1,32 +1,40 @@
 <script lang="ts">
-	let email = '';
-	let password = '';
+	import { goto } from '$app/navigation';
+	import { supabase } from '$lib/supabase/client';
 
-	function handleLogin() {
-		console.log('Login:', {
+	let email = $state('');
+	let password = $state('');
+	let errorMessage = $state('');
+	let loading = $state(false);
+
+	async function handleLogin() {
+		errorMessage = '';
+		loading = true;
+
+		const { error } = await supabase.auth.signInWithPassword({
 			email,
 			password
 		});
 
-		alert('Login form submitted.');
+		if (error) {
+			errorMessage = error.message;
+			loading = false;
+			return;
+		}
+
+		await goto('/dashboard');
 	}
 </script>
 
 <svelte:head>
 	<title>Log In | Kichele Link</title>
-	<meta
-		name="description"
-		content="Log in to your Kichele Link account."
-	/>
+	<meta name="description" content="Log in to your Kichele Link account." />
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 px-6 py-12">
 	<div class="mx-auto max-w-md">
 		<div class="rounded-xl border bg-white p-8 shadow-sm">
-			<a
-				href="/"
-				class="text-2xl font-bold text-green-700"
-			>
+			<a href="/" class="text-2xl font-bold text-green-700">
 				Kichele Link
 			</a>
 
@@ -41,6 +49,12 @@
 			<p class="mt-2 text-gray-600">
 				Log in to find gigs or manage your work.
 			</p>
+
+			{#if errorMessage}
+				<div class="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+					{errorMessage}
+				</div>
+			{/if}
 
 			<form
 				onsubmit={(event) => {
@@ -87,9 +101,10 @@
 
 				<button
 					type="submit"
-					class="w-full rounded-lg bg-green-600 px-4 py-3 font-semibold text-white hover:bg-green-700"
+					disabled={loading}
+					class="w-full rounded-lg bg-green-600 px-4 py-3 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
 				>
-					Log In
+					{loading ? 'Logging in...' : 'Log In'}
 				</button>
 			</form>
 

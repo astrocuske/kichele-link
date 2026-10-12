@@ -371,7 +371,7 @@
 		errorMessage = '';
 		const agreedPrice = Number(agreedPriceInput);
 
-		if (!agreedPriceInput.trim()) {
+		if (agreedPriceInput === '' || agreedPriceInput === null || agreedPriceInput === undefined) {
 			errorMessage = 'Please enter the agreed price.';
 			return;
 		}

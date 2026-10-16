@@ -125,7 +125,7 @@
 		>
 			<a href="/" class="flex items-center gap-3">
 				<div
-					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white shadow-sm"
+					class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-lg font-black text-white shadow-sm"
 				>
 					K
 				</div>
@@ -202,7 +202,7 @@
 				>
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<span
-							class="rounded-full bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700"
+							class="rounded-full bg-green-50 px-3 py-1.5 text-xs font-bold text-blue-700"
 						>
 							Open gig
 						</span>
@@ -317,7 +317,7 @@
 						<button
 							type="submit"
 							disabled={submitting || successMessage !== ''}
-							class="w-full rounded-xl bg-green-600 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+							class="w-full rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
 						>
 							{submitting
 								? 'Submitting...'

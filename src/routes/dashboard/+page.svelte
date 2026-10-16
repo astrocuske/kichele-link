@@ -8,8 +8,6 @@
 
     import { supabase } from '$lib/supabase/client';
 
-
-
     type Gig = {
 
         id: number;
@@ -32,8 +30,6 @@
 
     };
 
-
-
     type Application = {
 
         id: number;
@@ -50,8 +46,6 @@
 
     };
 
-
-
     let user = $state<User | null>(null);
 
     let gigs = $state<Gig[]>([]);
@@ -59,8 +53,6 @@
     let applications = $state<Application[]>([]);
 
     let profileNames = $state<Record<string, string>>({});
-
-
 
     let loading = $state(true);
 
@@ -74,13 +66,9 @@
 
     let confirmingDeleteGigId = $state<number | null>(null);
 
-
-
     let acceptingApplicationId = $state<number | null>(null);
 
     let agreedPriceInput = $state('');
-
-
 
     onMount(async () => {
 
@@ -94,8 +82,6 @@
 
             } = await supabase.auth.getUser();
 
-
-
             if (authError || !currentUser) {
 
                 goto('/login');
@@ -104,11 +90,7 @@
 
             }
 
-
-
             user = currentUser;
-
-
 
             const { data: userGigs, error: gigsError } = await supabase
 
@@ -124,8 +106,6 @@
 
                 .order('created_at', { ascending: false });
 
-
-
             if (gigsError) {
 
                 errorMessage = gigsError.message;
@@ -134,11 +114,7 @@
 
             }
 
-
-
             gigs = userGigs ?? [];
-
-
 
             if (gigs.length === 0) {
 
@@ -148,11 +124,7 @@
 
             }
 
-
-
             const gigIds = gigs.map((gig) => gig.id);
-
-
 
             const { data: gigApplications, error: applicationsError } =
 
@@ -166,8 +138,6 @@
 
                     .order('created_at', { ascending: false });
 
-
-
             if (applicationsError) {
 
                 errorMessage = applicationsError.message;
@@ -176,19 +146,13 @@
 
             }
 
-
-
             applications = gigApplications ?? [];
-
-
 
             const workerIds = [
 
                 ...new Set(applications.map((application) => application.worker_id))
 
             ];
-
-
 
             if (workerIds.length > 0) {
 
@@ -200,8 +164,6 @@
 
                     .in('user_id', workerIds);
 
-
-
                 if (profilesError) {
 
                     errorMessage = profilesError.message;
@@ -209,8 +171,6 @@
                     return;
 
                 }
-
-
 
                 profileNames = Object.fromEntries(
 
@@ -240,8 +200,6 @@
 
     });
 
-
-
     async function updateGigStatus(
 
         gigId: number,
@@ -254,8 +212,6 @@
 
         updatingGigId = gigId;
 
-
-
         const { error } = await supabase
 
             .from('gigs')
@@ -263,8 +219,6 @@
             .update({ status })
 
             .eq('id', gigId);
-
-
 
         if (error) {
 
@@ -276,29 +230,21 @@
 
         }
 
-
-
         gigs = gigs.map((gig) =>
 
             gig.id === gigId ? { ...gig, status } : gig
 
         );
 
-
-
         updatingGigId = null;
 
     }
-
-
 
     async function deleteGig(gigId: number) {
 
         errorMessage = '';
 
         deletingGigId = gigId;
-
-
 
         const { error } = await supabase
 
@@ -307,8 +253,6 @@
             .delete()
 
             .eq('id', gigId);
-
-
 
         if (error) {
 
@@ -322,8 +266,6 @@
 
         }
 
-
-
         gigs = gigs.filter((gig) => gig.id !== gigId);
 
         applications = applications.filter(
@@ -332,15 +274,11 @@
 
         );
 
-
-
         deletingGigId = null;
 
         confirmingDeleteGigId = null;
 
     }
-
-
 
     function startAcceptingApplication(applicationId: number) {
 
@@ -352,8 +290,6 @@
 
     }
 
-
-
     function cancelAcceptingApplication() {
 
         acceptingApplicationId = null;
@@ -362,76 +298,165 @@
 
     }
 
-
-
     async function confirmAcceptApplication(
-		applicationId: number,
-		gigId: number
-	) {
-		errorMessage = '';
-		const agreedPrice = Number(agreedPriceInput);
 
-		if (agreedPriceInput === '' || agreedPriceInput === null || agreedPriceInput === undefined) {
-			errorMessage = 'Please enter the agreed price.';
-			return;
-		}
-		if (!Number.isFinite(agreedPrice) || agreedPrice <= 0) {
-			errorMessage = 'Please enter a valid agreed price greater than 0.';
-			return;
-		}
-		if (!user) {
-			errorMessage = 'Your session is not ready. Please refresh the page and try again.';
-			return;
-		}
+        applicationId: number,
 
-		updatingApplicationId = applicationId;
+        gigId: number
 
-		const { error: gigError } = await supabase
-			.from('gigs')
-			.update({ status: 'closed', agreed_price: agreedPrice, payment_status: 'unpaid' })
-			.eq('id', gigId)
-			.eq('poster_id', user.id);
+    ) {
 
-		if (gigError) {
-			errorMessage = `Could not close the gig: ${gigError.message}`;
-			updatingApplicationId = null;
-			return;
-		}
+        errorMessage = '';
 
-		const { error: applicationError } = await supabase
-			.from('applications')
-			.update({ status: 'accepted' })
-			.eq('id', applicationId)
-			.eq('gig_id', gigId);
+        const agreedPrice = Number(agreedPriceInput);
 
-		if (applicationError) {
-			await supabase
-				.from('gigs')
-				.update({ status: 'open', agreed_price: null, payment_status: 'unpaid' })
-				.eq('id', gigId)
-				.eq('poster_id', user.id);
+        if (agreedPriceInput === '' || agreedPriceInput === null || agreedPriceInput === undefined) {
 
-			errorMessage = `Could not accept the applicant: ${applicationError.message}`;
-			updatingApplicationId = null;
-			return;
-		}
+            errorMessage = 'Please enter the agreed price.';
 
-		gigs = gigs.map((gig) =>
-			gig.id === gigId
-				? { ...gig, status: 'closed', agreed_price: agreedPrice, payment_status: 'unpaid' }
-				: gig
-		);
+            return;
 
-		applications = applications.map((application) =>
-			application.id === applicationId
-				? { ...application, status: 'accepted' }
-				: application
-		);
+        }
 
-		acceptingApplicationId = null;
-		agreedPriceInput = '';
-		updatingApplicationId = null;
-	}
+        if (!Number.isFinite(agreedPrice) || agreedPrice <= 0) {
+
+            errorMessage = 'Please enter a valid agreed price greater than 0.';
+
+            return;
+
+        }
+
+        if (!user) {
+
+            errorMessage = 'Your session is not ready. Please refresh the page and try again.';
+
+            return;
+
+        }
+
+        updatingApplicationId = applicationId;
+
+        const { error: gigError } = await supabase
+
+            .from('gigs')
+
+            .update({ status: 'closed', agreed_price: agreedPrice, payment_status: 'unpaid' })
+
+            .eq('id', gigId)
+
+            .eq('poster_id', user.id);
+
+        if (gigError) {
+
+            errorMessage = `Could not close the gig: ${gigError.message}`;
+
+            updatingApplicationId = null;
+
+            return;
+
+        }
+
+        const { error: applicationError } = await supabase
+
+            .from('applications')
+
+            .update({ status: 'accepted' })
+
+            .eq('id', applicationId)
+
+            .eq('gig_id', gigId);
+
+        if (applicationError) {
+
+            await supabase
+
+                .from('gigs')
+
+                .update({ status: 'open', agreed_price: null, payment_status: 'unpaid' })
+
+                .eq('id', gigId)
+
+                .eq('poster_id', user.id);
+
+            errorMessage = `Could not accept the applicant: ${applicationError.message}`;
+
+            updatingApplicationId = null;
+
+            return;
+
+        }
+
+        gigs = gigs.map((gig) =>
+
+            gig.id === gigId
+
+                ? { ...gig, status: 'closed', agreed_price: agreedPrice, payment_status: 'unpaid' }
+
+                : gig
+
+        );
+
+        applications = applications.map((application) =>
+
+    application.id === applicationId
+
+        ? { ...application, status: 'accepted' }
+
+        : application
+
+);
+
+const acceptedApplication = applications.find(
+
+    (application) => application.id === applicationId
+
+);
+
+if (!acceptedApplication) {
+
+    errorMessage = 'Could not find the accepted worker.';
+
+    updatingApplicationId = null;
+
+    return;
+
+}
+
+const { error: paymentError } = await supabase
+
+    .from('payment_transactions')
+
+    .insert({
+
+        gig_id: gigId,
+
+        payer_id: user.id,
+
+        worker_id: acceptedApplication.worker_id,
+
+        amount: agreedPrice,
+
+        status: 'pending'
+
+    });
+
+if (paymentError) {
+
+    errorMessage = `Gig accepted, but payment record could not be created: ${paymentError.message}`;
+
+    updatingApplicationId = null;
+
+    return;
+
+}
+
+        acceptingApplicationId = null;
+
+        agreedPriceInput = '';
+
+        updatingApplicationId = null;
+
+    }
 
 async function updateApplicationStatus(
 
@@ -449,8 +474,6 @@ async function updateApplicationStatus(
 
             );
 
-
-
             if (!application) {
 
                 errorMessage = 'Application not found.';
@@ -459,21 +482,15 @@ async function updateApplicationStatus(
 
             }
 
-
-
             startAcceptingApplication(applicationId);
 
             return;
 
         }
 
-
-
         errorMessage = '';
 
         updatingApplicationId = applicationId;
-
-
 
         const { error: applicationError } = await supabase
 
@@ -482,8 +499,6 @@ async function updateApplicationStatus(
             .update({ status: 'rejected' })
 
             .eq('id', applicationId);
-
-
 
         if (applicationError) {
 
@@ -495,8 +510,6 @@ async function updateApplicationStatus(
 
         }
 
-
-
         applications = applications.map((application) =>
 
             application.id === applicationId
@@ -507,13 +520,9 @@ async function updateApplicationStatus(
 
         );
 
-
-
         updatingApplicationId = null;
 
     }
-
-
 
     async function signOut() {
 
@@ -524,8 +533,6 @@ async function updateApplicationStatus(
     }
 
 </script>
-
-
 
 <svelte:head>
 
@@ -541,8 +548,6 @@ async function updateApplicationStatus(
 
 </svelte:head>
 
-
-
 <div class="min-h-screen bg-slate-50">
 
     <header class="border-b border-slate-200 bg-white">
@@ -557,15 +562,13 @@ async function updateApplicationStatus(
 
                 <div
 
-                    class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white shadow-sm"
+                    class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-lg font-black text-white shadow-sm"
 
                 >
 
                     K
 
                 </div>
-
-
 
                 <div>
 
@@ -574,8 +577,6 @@ async function updateApplicationStatus(
                         Kichele Link
 
                     </h1>
-
-
 
                     <p class="text-xs font-medium text-slate-500">
 
@@ -586,8 +587,6 @@ async function updateApplicationStatus(
                 </div>
 
             </a>
-
-
 
             <div class="flex items-center gap-3">
 
@@ -600,8 +599,6 @@ async function updateApplicationStatus(
                     </span>
 
                 {/if}
-
-
 
                 <button
 
@@ -623,8 +620,6 @@ async function updateApplicationStatus(
 
     </header>
 
-
-
     <main class="mx-auto max-w-7xl px-5 py-10 sm:px-6 lg:px-8">
 
         <div
@@ -635,9 +630,7 @@ async function updateApplicationStatus(
 
             <div>
 
-                <p class="text-sm font-bold text-green-700">YOUR SPACE</p>
-
-
+                <p class="text-sm font-bold text-blue-700">YOUR SPACE</p>
 
                 <h2
 
@@ -649,8 +642,6 @@ async function updateApplicationStatus(
 
                 </h2>
 
-
-
                 <p class="mt-2 text-sm leading-6 text-slate-500 sm:text-base">
 
                     Manage your gigs and review applications.
@@ -659,13 +650,11 @@ async function updateApplicationStatus(
 
             </div>
 
-
-
             <a
 
                 href="/post-gig"
 
-                class="inline-flex items-center justify-center rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-green-700"
+                class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
 
             >
 
@@ -674,8 +663,6 @@ async function updateApplicationStatus(
             </a>
 
         </div>
-
-
 
         <div class="mb-6 grid gap-4 sm:grid-cols-3">
 
@@ -687,8 +674,6 @@ async function updateApplicationStatus(
 
                 <p class="text-sm font-medium text-slate-500">Total gigs</p>
 
-
-
                 <p class="mt-2 text-2xl font-black text-slate-950">
 
                     {gigs.length}
@@ -697,27 +682,23 @@ async function updateApplicationStatus(
 
             </div>
 
-
-
             <div
 
                 class="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm"
 
             >
 
-                <p class="text-sm font-medium text-green-700">Open gigs</p>
+                <p class="text-sm font-medium text-blue
 
+                -700">Open gigs</p>
 
-
-                <p class="mt-2 text-2xl font-black text-green-800">
+                <p class="mt-2 text-2xl font-black text-blue-800">
 
                     {gigs.filter((gig) => gig.status === 'open').length}
 
                 </p>
 
             </div>
-
-
 
             <div
 
@@ -726,8 +707,6 @@ async function updateApplicationStatus(
             >
 
                 <p class="text-sm font-medium text-slate-500">Closed gigs</p>
-
-
 
                 <p class="mt-2 text-2xl font-black text-slate-950">
 
@@ -738,8 +717,6 @@ async function updateApplicationStatus(
             </div>
 
         </div>
-
-
 
         {#if errorMessage}
 
@@ -757,8 +734,6 @@ async function updateApplicationStatus(
 
                     </div>
 
-
-
                     <p class="text-sm leading-6 text-red-700">
 
                         {errorMessage}
@@ -771,8 +746,6 @@ async function updateApplicationStatus(
 
         {/if}
 
-
-
         {#if loading}
 
             <div
@@ -783,7 +756,7 @@ async function updateApplicationStatus(
 
                 <div
 
-                    class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-green-100 text-xl font-black text-green-700"
+                    class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-xl font-black text-green-700"
 
                 >
 
@@ -791,15 +764,11 @@ async function updateApplicationStatus(
 
                 </div>
 
-
-
                 <h3 class="mt-5 text-lg font-bold text-slate-900">
 
                     Loading your dashboard...
 
                 </h3>
-
-
 
                 <p class="mt-2 text-sm text-slate-500">
 
@@ -819,7 +788,7 @@ async function updateApplicationStatus(
 
                 <div
 
-                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-green-100 text-xl font-black text-green-700"
+                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-100 text-xl font-black text-blue-700"
 
                 >
 
@@ -827,15 +796,11 @@ async function updateApplicationStatus(
 
                 </div>
 
-
-
                 <h3 class="mt-5 text-2xl font-black text-slate-950">
 
                     No gigs yet
 
                 </h3>
-
-
 
                 <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
 
@@ -845,13 +810,11 @@ async function updateApplicationStatus(
 
                 </p>
 
-
-
                 <a
 
                     href="/post-gig"
 
-                    class="mt-6 inline-flex rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-green-700"
+                    class="mt-6 inline-flex rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-700"
 
                 >
 
@@ -895,8 +858,6 @@ async function updateApplicationStatus(
 
                                         </h3>
 
-
-
                                         <span
 
                                             class={`rounded-full px-3 py-1 text-xs font-bold ${
@@ -917,15 +878,11 @@ async function updateApplicationStatus(
 
                                     </div>
 
-
-
                                     <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
 
                                         {gig.description}
 
                                     </p>
-
-
 
                                     <div
 
@@ -939,15 +896,11 @@ async function updateApplicationStatus(
 
                                         </span>
 
-
-
                                         <span class="rounded-lg bg-slate-100 px-3 py-2">
 
                                             Posted {new Date(gig.created_at).toLocaleDateString()}
 
                                         </span>
-
-
 
                                         <span class="rounded-lg bg-slate-100 px-3 py-2">
 
@@ -960,8 +913,6 @@ async function updateApplicationStatus(
                                                 : ' Not set'}
 
                                         </span>
-
-
 
                                         <span
 
@@ -983,23 +934,19 @@ async function updateApplicationStatus(
 
                                     </div>
 
-
-
                                     <div class="mt-5 flex flex-wrap gap-2">
 
                                         <a
 
                                             href={`/gigs/${gig.id}/edit`}
 
-                                            class="inline-flex rounded-xl border border-green-200 bg-white px-4 py-2.5 text-sm font-bold text-green-700 transition hover:bg-green-50"
+                                            class="inline-flex rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-bold text-blue-700 transition hover:bg-blue-50"
 
                                         >
 
                                             Edit Gig
 
                                         </a>
-
-
 
                                         {#if gig.status === 'open'}
 
@@ -1037,7 +984,7 @@ async function updateApplicationStatus(
 
                                                     updateGigStatus(gig.id, 'open')}
 
-                                                class="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
 
                                             >
 
@@ -1050,8 +997,6 @@ async function updateApplicationStatus(
                                             </button>
 
                                         {/if}
-
-
 
                                         {#if confirmingDeleteGigId === gig.id}
 
@@ -1069,8 +1014,6 @@ async function updateApplicationStatus(
 
                                                     </p>
 
-
-
                                                     <p class="mt-1 text-xs leading-5 text-red-700">
 
                                                         This cannot be undone.
@@ -1078,8 +1021,6 @@ async function updateApplicationStatus(
                                                     </p>
 
                                                 </div>
-
-
 
                                                 <div class="flex gap-2">
 
@@ -1102,8 +1043,6 @@ async function updateApplicationStatus(
                                                             : 'Yes, Delete'}
 
                                                     </button>
-
-
 
                                                     <button
 
@@ -1153,8 +1092,6 @@ async function updateApplicationStatus(
 
                             </div>
 
-
-
                             <div class="mt-7 border-t border-slate-200 pt-6">
 
                                 <div class="flex items-center justify-between">
@@ -1166,8 +1103,6 @@ async function updateApplicationStatus(
                                             Applications
 
                                         </h4>
-
-
 
                                         <p class="mt-1 text-sm text-slate-500">
 
@@ -1186,8 +1121,6 @@ async function updateApplicationStatus(
                                     </div>
 
                                 </div>
-
-
 
                                 {#if applications.filter(
 
@@ -1249,8 +1182,6 @@ async function updateApplicationStatus(
 
                                                             </p>
 
-
-
                                                             <span
 
                                                                 class={`rounded-full px-2.5 py-1 text-xs font-bold ${
@@ -1259,7 +1190,7 @@ async function updateApplicationStatus(
 
                                                                     'accepted'
 
-                                                                        ? 'bg-green-100 text-green-700'
+                                                                        ? 'bg-green-100 text-blue-700'
 
                                                                         : application.status ===
 
@@ -1279,8 +1210,6 @@ async function updateApplicationStatus(
 
                                                         </div>
 
-
-
                                                         <p
 
                                                             class="mt-2 text-xs text-slate-400"
@@ -1299,8 +1228,6 @@ async function updateApplicationStatus(
 
                                                     </div>
 
-
-
                                                     {#if application.status === 'pending'}
 
                                                         {#if acceptingApplicationId === application.id}
@@ -1311,21 +1238,17 @@ async function updateApplicationStatus(
 
                                                             >
 
-                                                                <p class="text-sm font-bold text-green-800">
+                                                                <p class="text-sm font-bold text-blue-800">
 
                                                                     Accept this applicant
 
                                                                 </p>
-
-
 
                                                                 <p class="mt-1 text-xs leading-5 text-green-700">
 
                                                                     Enter the final agreed price for this gig.
 
                                                                 </p>
-
-
 
                                                                 <div class="mt-4">
 
@@ -1341,8 +1264,6 @@ async function updateApplicationStatus(
 
                                                                     </label>
 
-
-
                                                                     <input
 
                                                                         id={`agreed-price-${application.id}`}
@@ -1357,44 +1278,70 @@ async function updateApplicationStatus(
 
                                                                         placeholder="e.g. 600"
 
-                                                                        class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                                                                        class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
 
                                                                     />
 
                                                                 </div>
 
-
-
                                                                 <div class="mt-4">
+
                                                                     <form
+
                                                                         onsubmit={(event) => {
+
                                                                             event.preventDefault();
+
                                                                             confirmAcceptApplication(
+
                                                                                 application.id,
+
                                                                                 application.gig_id
+
                                                                             );
+
                                                                         }}
+
                                                                         class="flex flex-wrap gap-2"
+
                                                                     >
+
                                                                         <button
+
                                                                             type="submit"
+
                                                                             disabled={updatingApplicationId === application.id}
-                                                                            class="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+
+                                                                            class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+
                                                                         >
+
                                                                             {updatingApplicationId === application.id
+
                                                                                 ? 'Accepting...'
+
                                                                                 : 'Confirm Acceptance'}
+
                                                                         </button>
 
                                                                         <button
+
                                                                             type="button"
+
                                                                             disabled={updatingApplicationId === application.id}
+
                                                                             onclick={cancelAcceptingApplication}
+
                                                                             class="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+
                                                                         >
+
                                                                             Cancel
+
                                                                         </button>
+
                                                                     </form>
+
                                                                 </div>
 
                                                             </div>
@@ -1421,15 +1368,13 @@ async function updateApplicationStatus(
 
                                                                         )}
 
-                                                                    class="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
 
                                                                 >
 
                                                                     Accept
 
                                                                 </button>
-
-
 
                                                                 <button
 
@@ -1467,8 +1412,6 @@ async function updateApplicationStatus(
 
                                                 </div>
 
-
-
                                                 {#if application.message}
 
                                                     <div
@@ -1486,8 +1429,6 @@ async function updateApplicationStatus(
                                                             Message
 
                                                         </p>
-
-
 
                                                         <p
 

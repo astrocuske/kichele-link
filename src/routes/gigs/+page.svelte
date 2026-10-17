@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { supabase } from '$lib/supabase/client';
+	import { supabase } from '#lib/supabase/client.ts';
 
 	type Gig = {
 		id: number;

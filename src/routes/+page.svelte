@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { supabase } from '$lib/supabase/client';
+	import { supabase } from '#lib/supabase/client.ts';
 
 	let menuOpen = $state(false);
 

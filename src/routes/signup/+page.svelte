@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { supabase } from '$lib/supabase/client';
+	import { supabase } from '#lib/supabase/client.ts';
 
 	let name = $state('');
 	let email = $state('');

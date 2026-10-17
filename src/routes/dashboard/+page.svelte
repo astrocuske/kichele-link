@@ -39,11 +39,15 @@
     let acceptingApplicationId = $state<number | null>(null);
     let agreedPriceInput = $state('');
 
-    // M-Pesa payment state
-    let mpesaPhoneNumbers = $state<Record<number, string>>({});
-    let initiatingPaymentGigId = $state<number | null>(null);
-    let refreshingPaymentGigId = $state<number | null>(null);
-    let paymentMessages = $state<Record<number, string>>({});
+    // M-Pesa payment state: track each worker separately.
+    let mpesaPhoneNumbers = $state<Record<string, string>>({});
+    let initiatingPaymentKey = $state<string | null>(null);
+    let refreshingPaymentKey = $state<string | null>(null);
+    let paymentMessages = $state<Record<string, string>>({});
+
+    function paymentKey(gigId: number, workerId: string): string {
+        return `${gigId}-${workerId}`;
+    }
 
     onMount(async () => {
         try {
@@ -98,7 +102,9 @@
             applications = (gigApplications ?? []) as Application[];
 
             const workerIds = [
-                ...new Set(applications.map((application) => application.worker_id))
+                ...new Set(
+                    applications.map((application) => application.worker_id)
+                )
             ];
 
             if (workerIds.length > 0) {
@@ -132,16 +138,30 @@
         status: 'open' | 'closed'
     ) {
         errorMessage = '';
+
+        if (!user) {
+            errorMessage = 'Please sign in again.';
+            return;
+        }
+
         updatingGigId = gigId;
 
-        const { error } = await supabase
+        const { data, error } = await supabase
             .from('gigs')
             .update({ status })
             .eq('id', gigId)
-            .eq('poster_id', user!.id);
+            .eq('poster_id', user.id)
+            .select('id');
 
         if (error) {
             errorMessage = error.message;
+            updatingGigId = null;
+            return;
+        }
+
+        if (!data || data.length === 0) {
+            errorMessage =
+                'The gig status was not changed. Refresh the dashboard and try again.';
             updatingGigId = null;
             return;
         }
@@ -211,16 +231,31 @@
 
     async function deleteGig(gigId: number) {
         errorMessage = '';
+
+        if (!user) {
+            errorMessage = 'Please sign in again.';
+            return;
+        }
+
         deletingGigId = gigId;
 
-        const { error } = await supabase
+        const { data, error } = await supabase
             .from('gigs')
             .delete()
             .eq('id', gigId)
-            .eq('poster_id', user!.id);
+            .eq('poster_id', user.id)
+            .select('id');
 
         if (error) {
             errorMessage = error.message;
+            deletingGigId = null;
+            confirmingDeleteGigId = null;
+            return;
+        }
+
+        if (!data || data.length === 0) {
+            errorMessage =
+                'The gig was not deleted. Refresh the dashboard and try again.';
             deletingGigId = null;
             confirmingDeleteGigId = null;
             return;
@@ -251,6 +286,7 @@
         gigId: number
     ) {
         errorMessage = '';
+
         const agreedPrice = Number(agreedPriceInput);
 
         if (agreedPriceInput.trim() === '') {
@@ -274,6 +310,11 @@
             return;
         }
 
+        if (updatingApplicationId !== null) {
+            errorMessage = 'Please wait for the current operation to finish.';
+            return;
+        }
+
         const application = applications.find(
             (item) => item.id === applicationId && item.gig_id === gigId
         );
@@ -292,99 +333,141 @@
 
         updatingApplicationId = applicationId;
 
-        const { error: gigError } = await supabase
-            .from('gigs')
-            .update({
-                status: 'closed',
-                agreed_price: agreedPrice,
-                payment_status: 'unpaid'
-            })
-            .eq('id', gigId)
-            .eq('poster_id', user.id)
-            .eq('status', 'open');
-
-        if (gigError) {
-            errorMessage = `Could not close the gig: ${gigError.message}`;
-            updatingApplicationId = null;
-            return;
-        }
-
-        const { data: updatedGig, error: verifyGigError } = await supabase
-            .from('gigs')
-            .select('id')
-            .eq('id', gigId)
-            .eq('poster_id', user.id)
-            .eq('status', 'closed');
-
-        if (verifyGigError || !updatedGig || updatedGig.length === 0) {
-            errorMessage =
-                'The gig status could not be confirmed. Please refresh the dashboard before trying again.';
-            updatingApplicationId = null;
-            return;
-        }
-
-        const { error: applicationError } = await supabase
-            .from('applications')
-            .update({ status: 'accepted' })
-            .eq('id', applicationId)
-            .eq('gig_id', gigId)
-            .eq('status', 'pending');
-
-        if (applicationError) {
-            await supabase
+        try {
+            /*
+             * Step 1: Close the gig.
+             * The returned row confirms that this update actually happened.
+             */
+            const { data: closedGig, error: gigError } = await supabase
                 .from('gigs')
                 .update({
-                    status: 'open',
-                    agreed_price: null,
+                    status: 'closed',
+                    agreed_price: agreedPrice,
                     payment_status: 'unpaid'
                 })
                 .eq('id', gigId)
-                .eq('poster_id', user.id);
+                .eq('poster_id', user.id)
+                .eq('status', 'open')
+                .select('id');
 
-            errorMessage = `Could not accept the applicant: ${applicationError.message}`;
-            updatingApplicationId = null;
-            return;
-        }
+            if (gigError) {
+                errorMessage = `Could not close the gig: ${gigError.message}`;
+                return;
+            }
 
-        gigs = gigs.map((item) =>
-            item.id === gigId
-                ? {
-                      ...item,
-                      status: 'closed',
-                      agreed_price: agreedPrice,
-                      payment_status: 'unpaid'
-                  }
-                : item
-        );
+            if (!closedGig || closedGig.length === 0) {
+                errorMessage =
+                    'The gig was not closed. It may already have been changed. Refresh the dashboard and try again.';
+                return;
+            }
 
-        applications = applications.map((item) =>
-            item.id === applicationId
-                ? { ...item, status: 'accepted' }
-                : item
-        );
+            /*
+             * Step 2: Accept the application.
+             * The returned row confirms that a pending application was updated.
+             */
+            const {
+                data: updatedApplication,
+                error: applicationError
+            } = await supabase
+                .from('applications')
+                .update({ status: 'accepted' })
+                .eq('id', applicationId)
+                .eq('gig_id', gigId)
+                .eq('status', 'pending')
+                .select('id');
 
-        const { error: paymentError } = await supabase
-            .from('payment_transactions')
-            .insert({
-                gig_id: gigId,
-                payer_id: user.id,
-                worker_id: application.worker_id,
-                amount: agreedPrice,
-                status: 'pending'
-            });
+            if (
+                applicationError ||
+                !updatedApplication ||
+                updatedApplication.length === 0
+            ) {
+                /*
+                 * Acceptance failed. Attempt to reopen the gig, but only
+                 * if it is still closed at the agreed price set above.
+                 */
+                const { data: reopenedGig, error: rollbackError } =
+                    await supabase
+                        .from('gigs')
+                        .update({
+                            status: 'open',
+                            agreed_price: null,
+                            payment_status: 'unpaid'
+                        })
+                        .eq('id', gigId)
+                        .eq('poster_id', user.id)
+                        .eq('status', 'closed')
+                        .eq('agreed_price', agreedPrice)
+                        .select('id');
 
-        if (paymentError) {
-            errorMessage =
-                `The applicant was accepted, but the payment record could not be created: ${paymentError.message}`;
-            updatingApplicationId = null;
+                if (applicationError) {
+                    errorMessage =
+                        `Could not accept the applicant: ${applicationError.message}`;
+                } else {
+                    errorMessage =
+                        'The application was not updated. Please refresh the dashboard and check its status.';
+                }
+
+                if (rollbackError) {
+                    errorMessage +=
+                        ` The gig could not be reopened automatically: ${rollbackError.message}. Please check its status.`;
+                } else if (!reopenedGig || reopenedGig.length === 0) {
+                    errorMessage +=
+                        ' The gig was not reopened automatically. Please refresh the dashboard and check its status.';
+                }
+
+                return;
+            }
+
+            /*
+             * Step 3: Update the local dashboard after acceptance succeeds.
+             */
+            gigs = gigs.map((item) =>
+                item.id === gigId
+                    ? {
+                          ...item,
+                          status: 'closed',
+                          agreed_price: agreedPrice,
+                          payment_status: 'unpaid'
+                      }
+                    : item
+            );
+
+            applications = applications.map((item) =>
+                item.id === applicationId
+                    ? { ...item, status: 'accepted' }
+                    : item
+            );
+
+            /*
+             * Step 4: Create the pending payment record.
+             * The M-Pesa Edge Function and callback flow remain unchanged.
+             */
+            const { error: paymentError } = await supabase
+                .from('payment_transactions')
+                .insert({
+                    gig_id: gigId,
+                    payer_id: user.id,
+                    worker_id: application.worker_id,
+                    amount: agreedPrice,
+                    status: 'pending'
+                });
+
+            if (paymentError) {
+                errorMessage =
+                    `The applicant was accepted, but the payment record could not be created: ${paymentError.message}. Please check the payment record before attempting another payment.`;
+                return;
+            }
+
             acceptingApplicationId = null;
             agreedPriceInput = '';
-            return;
+        } catch (error) {
+            errorMessage =
+                error instanceof Error
+                    ? `An unexpected error occurred: ${error.message}`
+                    : 'An unexpected error occurred while accepting the applicant. Refresh the dashboard and check the application and gig status.';
+        } finally {
+            updatingApplicationId = null;
         }
-
-        acceptingApplicationId = null;
-        agreedPriceInput = '';
-        updatingApplicationId = null;
     }
 
     async function updateApplicationStatus(
@@ -406,27 +489,67 @@
         }
 
         errorMessage = '';
-        updatingApplicationId = applicationId;
 
-        const { error: applicationError } = await supabase
-            .from('applications')
-            .update({ status: 'rejected' })
-            .eq('id', applicationId)
-            .eq('status', 'pending');
-
-        if (applicationError) {
-            errorMessage = applicationError.message;
-            updatingApplicationId = null;
+        if (!user) {
+            errorMessage = 'Please sign in again.';
             return;
         }
 
-        applications = applications.map((application) =>
-            application.id === applicationId
-                ? { ...application, status: 'rejected' }
-                : application
+        if (updatingApplicationId !== null) {
+            return;
+        }
+
+        const application = applications.find(
+            (item) => item.id === applicationId
         );
 
-        updatingApplicationId = null;
+        if (!application || application.status !== 'pending') {
+            errorMessage = 'This application is no longer pending.';
+            return;
+        }
+
+        const gig = gigs.find((item) => item.id === application.gig_id);
+
+        if (!gig || gig.status !== 'open') {
+            errorMessage = 'Only applications for open gigs can be rejected.';
+            return;
+        }
+
+        updatingApplicationId = applicationId;
+
+        try {
+            const { data, error: applicationError } = await supabase
+                .from('applications')
+                .update({ status: 'rejected' })
+                .eq('id', applicationId)
+                .eq('gig_id', application.gig_id)
+                .eq('status', 'pending')
+                .select('id');
+
+            if (applicationError) {
+                errorMessage = applicationError.message;
+                return;
+            }
+
+            if (!data || data.length === 0) {
+                errorMessage =
+                    'The application was not updated. Refresh the dashboard and try again.';
+                return;
+            }
+
+            applications = applications.map((item) =>
+                item.id === applicationId
+                    ? { ...item, status: 'rejected' }
+                    : item
+            );
+        } catch (error) {
+            errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : 'An unexpected error occurred while rejecting the application.';
+        } finally {
+            updatingApplicationId = null;
+        }
     }
 
     async function signOut() {
@@ -434,30 +557,53 @@
         goto('/login');
     }
 
-    // Initiate an M-Pesa STK Push through the authenticated Edge Function.
-    async function initiateMpesaPayment(gigId: number) {
-        paymentMessages[gigId] = '';
+    // Initiate an M-Pesa STK Push for one specific accepted worker.
+    async function initiateMpesaPayment(gigId: number, workerId: string) {
+        const key = paymentKey(gigId, workerId);
+        paymentMessages[key] = '';
 
-        const phone = mpesaPhoneNumbers[gigId]?.trim();
+        const phone = mpesaPhoneNumbers[key]?.trim();
 
         if (!phone) {
-            paymentMessages[gigId] = 'Please enter your M-Pesa phone number.';
+            paymentMessages[key] = 'Please enter the worker payment phone number.';
             return;
         }
 
         const gig = gigs.find((item) => item.id === gigId);
 
         if (!gig || gig.payment_status === 'paid') {
-            paymentMessages[gigId] = 'This gig is not awaiting payment.';
+            paymentMessages[key] = 'This gig is not awaiting payment.';
+            return;
+        }
+
+        const acceptedApplication = applications.find(
+            (application) =>
+                application.gig_id === gigId &&
+                application.worker_id === workerId &&
+                application.status === 'accepted'
+        );
+
+        if (
+            !acceptedApplication ||
+            !['closed', 'completed'].includes(gig.status) ||
+            gig.agreed_price === null ||
+            gig.agreed_price < 1
+        ) {
+            paymentMessages[key] =
+                'This worker or agreed price is not ready for payment.';
             return;
         }
 
         if (!user) {
-            paymentMessages[gigId] = 'Please sign in again before paying.';
+            paymentMessages[key] = 'Please sign in again before paying.';
             return;
         }
 
-        initiatingPaymentGigId = gigId;
+        if (initiatingPaymentKey !== null) {
+            return;
+        }
+
+        initiatingPaymentKey = key;
 
         try {
             const { data, error } = await supabase.functions.invoke(
@@ -465,85 +611,122 @@
                 {
                     body: {
                         gig_id: gigId,
+                        worker_id: workerId,
                         phone_number: phone
                     }
                 }
             );
 
             if (error) {
-                paymentMessages[gigId] =
-                    `Could not start payment: ${error.message}. Check your connection and function deployment.`;
+                paymentMessages[key] =
+                    `Could not start payment: ${error.message}. Check the function deployment and logs.`;
                 return;
             }
 
             if (!data?.success) {
-                paymentMessages[gigId] =
+                paymentMessages[key] =
                     data?.error ??
-                    'The payment request could not be started. Please try again later.';
+                    'The payment request could not be started. Please check its status before trying again.';
                 return;
             }
 
-            paymentMessages[gigId] =
+            paymentMessages[key] =
                 data.message ??
-                'STK Push requested. Check your phone for the M-Pesa prompt and enter your PIN only in the official prompt.';
+                'Payment request sent. Check the phone for the official M-Pesa prompt.';
         } catch (error) {
-            paymentMessages[gigId] =
+            paymentMessages[key] =
                 error instanceof Error
                     ? error.message
                     : 'An unexpected error occurred while requesting payment.';
         } finally {
-            initiatingPaymentGigId = null;
+            initiatingPaymentKey = null;
         }
     }
 
-    // Refresh only the gig's payment status from Supabase.
-    // This does not mark a payment as paid from the browser.
-    async function refreshPaymentStatus(gigId: number) {
+    // Refresh the payment status for one specific worker.
+    async function refreshPaymentStatus(gigId: number, workerId: string) {
+        const key = paymentKey(gigId, workerId);
+
         if (!user) {
-            paymentMessages[gigId] = 'Please sign in again.';
+            paymentMessages[key] = 'Please sign in again.';
             return;
         }
 
-        refreshingPaymentGigId = gigId;
+        if (refreshingPaymentKey !== null) {
+            return;
+        }
+
+        refreshingPaymentKey = key;
 
         try {
-            const { data, error } = await supabase
+            const { data: transaction, error: transactionError } = await supabase
+                .from('payment_transactions')
+                .select('status, mpesa_receipt_number')
+                .eq('gig_id', gigId)
+                .eq('payer_id', user.id)
+                .eq('worker_id', workerId)
+                .maybeSingle();
+
+            if (transactionError) {
+                paymentMessages[key] =
+                    `Could not refresh this worker's payment: ${transactionError.message}`;
+                return;
+            }
+
+            if (!transaction) {
+                paymentMessages[key] =
+                    'No payment record found for this worker. Please contact support before attempting payment.';
+                return;
+            }
+
+            const { data: gigData, error: gigError } = await supabase
                 .from('gigs')
                 .select('payment_status')
                 .eq('id', gigId)
                 .eq('poster_id', user.id)
                 .maybeSingle();
 
-            if (error) {
-                paymentMessages[gigId] =
-                    `Could not refresh payment status: ${error.message}`;
+            if (gigError) {
+                paymentMessages[key] =
+                    `Could not refresh gig status: ${gigError.message}`;
                 return;
             }
 
-            if (!data) {
-                paymentMessages[gigId] = 'Could not find this gig.';
+            if (!gigData) {
+                paymentMessages[key] = 'Could not find this gig.';
                 return;
             }
 
-            const status = data.payment_status as 'unpaid' | 'paid';
-
-            gigs = gigs.map((gig) =>
-                gig.id === gigId
-                    ? { ...gig, payment_status: status }
-                    : gig
+            gigs = gigs.map((item) =>
+                item.id === gigId
+                    ? {
+                        ...item,
+                        payment_status: gigData.payment_status as 'unpaid' | 'paid'
+                    }
+                    : item
             );
 
-            paymentMessages[gigId] =
-                status === 'paid'
-                    ? 'Payment has been confirmed by the server.'
-                    : 'Payment has not yet been confirmed. If you completed the prompt, wait a little and refresh again.';
+            if (transaction.status === 'paid') {
+                paymentMessages[key] = transaction.mpesa_receipt_number
+                    ? `Payment confirmed. M-Pesa receipt: ${transaction.mpesa_receipt_number}`
+                    : 'This worker’s payment has been confirmed by the server.';
+            } else if (
+                transaction.status === 'initiating' ||
+                transaction.status === 'pending'
+            ) {
+                paymentMessages[key] =
+                    'This worker’s payment is not yet confirmed. If you requested an STK Push, wait and refresh again.';
+            } else {
+                paymentMessages[key] =
+                    `Current payment status: ${transaction.status}. Check the transaction before trying again.`;
+            }
         } catch (error) {
-            paymentMessages[gigId] =
+            paymentMessages[key] =
                 error instanceof Error
                     ? error.message
                     : 'Could not refresh payment status.';
         } finally {
-            refreshingPaymentGigId = null;
+            refreshingPaymentKey = null;
         }
     }
 </script>
@@ -732,72 +915,101 @@
                                                 application.gig_id === gig.id &&
                                                 application.status === 'accepted'
                                         )}
-                                        <div class="mt-5 max-w-lg rounded-2xl border border-green-200 bg-green-50 p-5">
+                                        <div class="mt-5 space-y-4">
                                             <h4 class="font-bold text-slate-900">
-                                                Pay for this gig
+                                                Pay accepted workers
                                             </h4>
 
-                                            <p class="mt-1 text-sm text-slate-600">
-                                                Agreed amount:
-                                                KSh {gig.agreed_price?.toLocaleString() ?? 'Not set'}
+                                            <p class="text-sm text-slate-600">
+                                                Each accepted worker has a separate payment of
+                                                KSh {gig.agreed_price?.toLocaleString() ?? 'Not set'}.
                                             </p>
 
-                                            <label
-                                                for={`mpesa-phone-${gig.id}`}
-                                                class="mt-4 block text-sm font-semibold text-slate-700"
-                                            >
-                                                M-Pesa phone number
-                                            </label>
+                                            {#each applications.filter(
+                                                (application) =>
+                                                    application.gig_id === gig.id &&
+                                                    application.status === 'accepted'
+                                            ) as acceptedApplication (acceptedApplication.id)}
+                                                {@const key = paymentKey(gig.id, acceptedApplication.worker_id)}
 
-                                            <input
-                                                id={`mpesa-phone-${gig.id}`}
-                                                type="tel"
-                                                autocomplete="tel"
-                                                inputmode="tel"
-                                                placeholder="e.g. 0712345678"
-                                                bind:value={mpesaPhoneNumbers[gig.id]}
-                                                class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-green-500"
-                                            />
+                                                <div class="max-w-lg rounded-2xl border border-green-200 bg-green-50 p-5">
+                                                    <h5 class="font-bold text-slate-900">
+                                                        Worker:
+                                                        {profileNames[acceptedApplication.worker_id] ??
+                                                            acceptedApplication.worker_id.slice(0, 8)}
+                                                    </h5>
 
-                                            <button
-                                                type="button"
-                                                disabled={
-                                                    initiatingPaymentGigId === gig.id ||
-                                                    gig.agreed_price === null ||
-                                                    gig.agreed_price < 1
-                                                }
-                                                onclick={() => initiateMpesaPayment(gig.id)}
-                                                class="mt-3 w-full rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                            >
-                                                {initiatingPaymentGigId === gig.id
-                                                    ? 'Requesting payment...'
-                                                    : 'Pay with M-Pesa'}
-                                            </button>
+                                                    <p class="mt-1 text-sm text-slate-600">
+                                                        Amount due: KSh
+                                                        {gig.agreed_price?.toLocaleString() ?? 'Not set'}
+                                                    </p>
 
-                                            <button
-                                                type="button"
-                                                disabled={refreshingPaymentGigId === gig.id}
-                                                onclick={() => refreshPaymentStatus(gig.id)}
-                                                class="mt-2 w-full rounded-xl border border-green-300 bg-white px-5 py-3 text-sm font-bold text-green-800 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                            >
-                                                {refreshingPaymentGigId === gig.id
-                                                    ? 'Checking status...'
-                                                    : 'Refresh payment status'}
-                                            </button>
+                                                    <label
+                                                        for={`mpesa-phone-${key}`}
+                                                        class="mt-4 block text-sm font-semibold text-slate-700"
+                                                    >
+                                                        Worker’s M-Pesa phone number
+                                                    </label>
 
-                                            {#if paymentMessages[gig.id]}
-                                                <p
-                                                    aria-live="polite"
-                                                    class="mt-3 text-sm leading-5 text-slate-700"
-                                                >
-                                                    {paymentMessages[gig.id]}
-                                                </p>
-                                            {/if}
+                                                    <input
+                                                        id={`mpesa-phone-${key}`}
+                                                        type="tel"
+                                                        autocomplete="tel"
+                                                        inputmode="tel"
+                                                        placeholder="e.g. 0712345678"
+                                                        bind:value={mpesaPhoneNumbers[key]}
+                                                        class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-green-500"
+                                                    />
 
-                                            <p class="mt-3 text-xs leading-5 text-slate-500">
-                                                Only enter your PIN in the official M-Pesa prompt on your phone.
-                                                Do not share your PIN with anyone.
-                                            </p>
+                                                    <button
+                                                        type="button"
+                                                        disabled={
+                                                            initiatingPaymentKey !== null ||
+                                                            gig.agreed_price === null ||
+                                                            gig.agreed_price < 1
+                                                        }
+                                                        onclick={() =>
+                                                            initiateMpesaPayment(
+                                                                gig.id,
+                                                                acceptedApplication.worker_id
+                                                            )}
+                                                        class="mt-3 w-full rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    >
+                                                        {initiatingPaymentKey === key
+                                                            ? 'Requesting payment...'
+                                                            : 'Pay this worker with M-Pesa'}
+                                                    </button>
+
+                                                    <button
+                                                        type="button"
+                                                        disabled={refreshingPaymentKey !== null}
+                                                        onclick={() =>
+                                                            refreshPaymentStatus(
+                                                                gig.id,
+                                                                acceptedApplication.worker_id
+                                                            )}
+                                                        class="mt-2 w-full rounded-xl border border-green-300 bg-white px-5 py-3 text-sm font-bold text-green-800 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    >
+                                                        {refreshingPaymentKey === key
+                                                            ? 'Checking status...'
+                                                            : 'Refresh this worker’s payment'}
+                                                    </button>
+
+                                                    {#if paymentMessages[key]}
+                                                        <p
+                                                            aria-live="polite"
+                                                            class="mt-3 text-sm leading-5 text-slate-700"
+                                                        >
+                                                            {paymentMessages[key]}
+                                                        </p>
+                                                    {/if}
+
+                                                    <p class="mt-3 text-xs leading-5 text-slate-500">
+                                                        Only enter your PIN in the official M-Pesa prompt on your phone.
+                                                        Never share your PIN with anyone.
+                                                    </p>
+                                                </div>
+                                            {/each}
                                         </div>
                                     {/if}
 
@@ -812,7 +1024,7 @@
                                         {#if gig.status === 'open'}
                                             <button
                                                 type="button"
-                                                disabled={updatingGigId === gig.id}
+                                                disabled={updatingGigId === gig.id || updatingApplicationId !== null}
                                                 onclick={() => updateGigStatus(gig.id, 'closed')}
                                                 class="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                             >
@@ -821,7 +1033,7 @@
                                         {:else if gig.status === 'closed'}
                                             <button
                                                 type="button"
-                                                disabled={updatingGigId === gig.id}
+                                                disabled={updatingGigId === gig.id || updatingApplicationId !== null}
                                                 onclick={() => updateGigStatus(gig.id, 'open')}
                                                 class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                                             >
@@ -831,7 +1043,7 @@
                                             {#if applications.some((application) => application.gig_id === gig.id && application.status === 'accepted')}
                                                 <button
                                                     type="button"
-                                                    disabled={updatingGigId === gig.id}
+                                                    disabled={updatingGigId === gig.id || updatingApplicationId !== null}
                                                     onclick={() => markGigCompleted(gig.id)}
                                                     class="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >

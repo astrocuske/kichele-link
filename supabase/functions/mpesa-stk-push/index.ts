@@ -111,14 +111,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const gigId = Number(body.gig_id);
+    const workerId = typeof body.worker_id === "string"
+      ? body.worker_id.trim()
+      : "";
 
     const phone = typeof body.phone_number === "string"
       ? kenyaPhoneNumber(body.phone_number)
       : null;
 
-    if (!Number.isSafeInteger(gigId) || gigId <= 0 || !phone) {
+    if (!Number.isSafeInteger(gigId) || gigId <= 0 || !workerId || !phone) {
       return jsonResponse({
-        error: "Provide a valid gig ID and Kenyan M-Pesa phone number.",
+        error: "Provide a valid gig ID, accepted worker, and Kenyan M-Pesa phone number.",
       }, 400);
     }
 
@@ -158,11 +161,15 @@ Deno.serve(async (req: Request) => {
       }, 400);
     }
 
+    // Verify the specific worker selected in the dashboard. A gig may have
+    // multiple accepted workers, so never use maybeSingle() for all accepted
+    // applications without filtering by worker_id.
     const { data: acceptedApplication, error: applicationError } =
       await admin
         .from("applications")
         .select("worker_id")
         .eq("gig_id", gigId)
+        .eq("worker_id", workerId)
         .eq("status", "accepted")
         .maybeSingle();
 
@@ -172,19 +179,19 @@ Deno.serve(async (req: Request) => {
         applicationError.message,
       );
       return jsonResponse({
-        error: "Could not verify the accepted worker.",
+        error: "Could not verify the selected accepted worker.",
       }, 500);
     }
 
     if (!acceptedApplication) {
       return jsonResponse({
-        error: "No accepted worker was found for this gig.",
+        error: "The selected worker does not have an accepted application for this gig.",
       }, 409);
     }
 
     const { data: transaction, error: transactionError } = await admin
       .from("payment_transactions")
-      .select("id, amount, status, checkout_request_id")
+      .select("id, worker_id, amount, status, checkout_request_id")
       .eq("gig_id", gigId)
       .eq("payer_id", user.id)
       .eq("worker_id", acceptedApplication.worker_id)
@@ -200,7 +207,11 @@ Deno.serve(async (req: Request) => {
       }, 500);
     }
 
-    if (!transaction || Number(transaction.amount) !== amount) {
+    if (
+      !transaction ||
+      transaction.worker_id !== workerId ||
+      Number(transaction.amount) !== amount
+    ) {
       return jsonResponse({
         error: "The payment record does not match the agreed price.",
       }, 409);
@@ -300,7 +311,7 @@ Deno.serve(async (req: Request) => {
             PartyB: shortcode,
             PhoneNumber: phone,
             CallBackURL: callbackUrl,
-            AccountReference: `KL${gigId}`.slice(0, 12),
+            AccountReference: `KL${gigId}W${workerId.replace(/-/g, "").slice(0, 6)}`.slice(0, 12),
             TransactionDesc: "Kichele gig payment",
           }),
         },

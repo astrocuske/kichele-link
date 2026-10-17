@@ -46,6 +46,86 @@ function getTimestamp(): string {
   return `${part("year")}${part("month")}${part("day")}${part("hour")}${part("minute")}${part("second")}`;
 }
 
+/**
+ * A gig is paid only when every currently accepted worker has a paid
+ * transaction for this gig and poster. This also repairs an incorrect
+ * "paid" gig status left by an earlier callback implementation.
+ */
+async function reconcileGigPayment(
+  admin: ReturnType<typeof createClient>,
+  gigId: number,
+  payerId: string,
+): Promise<boolean> {
+  const { data: acceptedApplications, error: applicationsError } = await admin
+    .from("applications")
+    .select("worker_id")
+    .eq("gig_id", gigId)
+    .eq("status", "accepted");
+
+  if (applicationsError) {
+    throw new Error(`Could not load accepted workers: ${applicationsError.message}`);
+  }
+
+  const workerIds = [
+    ...new Set(
+      (acceptedApplications ?? [])
+        .map((application: { worker_id: string | null }) =>
+          String(application.worker_id ?? ""),
+        )
+        .filter((workerId: string) => workerId.length > 0),
+    ),
+  ];
+
+  // Do not mark a gig paid if there are no accepted workers to reconcile.
+  if (workerIds.length === 0) {
+    const { error } = await admin
+      .from("gigs")
+      .update({ payment_status: "unpaid" })
+      .eq("id", gigId)
+      .eq("poster_id", payerId);
+
+    if (error) {
+      throw new Error(`Could not reconcile gig payment status: ${error.message}`);
+    }
+    return false;
+  }
+
+  const { data: transactions, error: transactionsError } = await admin
+    .from("payment_transactions")
+    .select("worker_id, status")
+    .eq("gig_id", gigId)
+    .eq("payer_id", payerId)
+    .in("worker_id", workerIds);
+
+  if (transactionsError) {
+    throw new Error(`Could not load worker payment transactions: ${transactionsError.message}`);
+  }
+
+  const paidWorkerIds = new Set(
+    (transactions ?? [])
+      .filter((transaction: { worker_id: string; status: string }) =>
+        transaction.status === "paid",
+      )
+      .map((transaction: { worker_id: string }) => transaction.worker_id),
+  );
+
+  const allWorkersPaid = workerIds.every((workerId) =>
+    paidWorkerIds.has(workerId),
+  );
+
+  const { error: gigUpdateError } = await admin
+    .from("gigs")
+    .update({ payment_status: allWorkersPaid ? "paid" : "unpaid" })
+    .eq("id", gigId)
+    .eq("poster_id", payerId);
+
+  if (gigUpdateError) {
+    throw new Error(`Could not update gig payment status: ${gigUpdateError.message}`);
+  }
+
+  return allWorkersPaid;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -130,20 +210,17 @@ Deno.serve(async (req: Request) => {
       return reply();
     }
 
-    // A previously verified payment must remain paid. Repair the gig status
-    // if a previous database update was interrupted.
+    // A previously verified worker payment is idempotent, but the whole gig
+    // is marked paid only if every accepted worker has also paid.
     if (transaction.status === "paid") {
-      const { error: gigError } = await admin
-        .from("gigs")
-        .update({ payment_status: "paid" })
-        .eq("id", transaction.gig_id)
-        .eq("poster_id", transaction.payer_id);
+      await reconcileGigPayment(admin, transaction.gig_id, transaction.payer_id);
+      return reply();
+    }
 
-      if (gigError) {
-        console.error("Could not reconcile already-paid gig:", gigError.message);
-        return new Response("Gig reconciliation failed", { status: 500 });
-      }
-
+    // The STK Push function reserves a row as "initiating" before contacting
+    // Daraja, so accept both "initiating" and "pending" for finalization.
+    if (!["initiating", "pending"].includes(transaction.status)) {
+      console.log("Transaction is not in a payable state; no change made.");
       return reply();
     }
 
@@ -236,7 +313,6 @@ Deno.serve(async (req: Request) => {
       return reply();
     }
 
-    // Change the transaction only if it is still pending.
     const now = new Date().toISOString();
 
     const { data: updatedTransaction, error: updateError } = await admin
@@ -251,7 +327,7 @@ Deno.serve(async (req: Request) => {
         paid_at: now,
       })
       .eq("id", transaction.id)
-      .eq("status", "pending")
+      .in("status", ["pending", "initiating"])
       .select("id")
       .maybeSingle();
 
@@ -261,32 +337,35 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!updatedTransaction) {
-      // Another callback may already have processed this transaction.
-      const { data: latestTransaction } = await admin
+      // Another callback may have processed the transaction concurrently.
+      const { data: latestTransaction, error: latestError } = await admin
         .from("payment_transactions")
         .select("status")
         .eq("id", transaction.id)
         .maybeSingle();
 
+      if (latestError) {
+        console.error("Could not confirm latest transaction status:", latestError.message);
+        return new Response("Payment confirmation failed", { status: 500 });
+      }
+
       if (latestTransaction?.status !== "paid") {
-        console.error("Transaction was not pending; no payment status change made.");
+        console.error("Transaction was not finalized; no gig status change made.");
         return reply();
       }
     }
 
-    // Update the gig only after payment verification.
-    const { error: gigUpdateError } = await admin
-      .from("gigs")
-      .update({ payment_status: "paid" })
-      .eq("id", transaction.gig_id)
-      .eq("poster_id", transaction.payer_id);
+    // Reconcile the whole gig after this worker's payment is verified.
+    // It remains unpaid until every accepted worker has a paid transaction.
+    const allWorkersPaid = await reconcileGigPayment(
+      admin,
+      transaction.gig_id,
+      transaction.payer_id,
+    );
 
-    if (gigUpdateError) {
-      console.error("Payment verified, but gig update failed:", gigUpdateError.message);
-      return new Response("Gig update failed", { status: 500 });
-    }
-
-    console.log("Verified M-Pesa payment processed for transaction:", transaction.id);
+    console.log(
+      `Verified M-Pesa payment for transaction ${transaction.id}. All accepted workers paid: ${allWorkersPaid}`,
+    );
     return reply();
   } catch (error) {
     console.error(

@@ -19,29 +19,14 @@ function kenyaPhoneNumber(input: string): string | null {
   const digits = input.replace(/\D/g, "");
 
   if (/^254[71]\d{8}$/.test(digits)) return digits;
-  if (/^0[71]\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
-  if (/^[71]\d{8}$/.test(digits)) return `254${digits}`;
+  if (/^0[71]\d{8}$/.test(digits)) {
+    return `254${digits.slice(1)}`;
+  }
+  if (/^[71]\d{8}$/.test(digits)) {
+    return `254${digits}`;
+  }
 
   return null;
-}
-
-function kenyaTimestamp(): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Africa/Nairobi",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-
-  const values = Object.fromEntries(
-    parts.map((part) => [part.type, part.value]),
-  );
-
-  return `${values.year}${values.month}${values.day}${values.hour}${values.minute}${values.second}`;
 }
 
 Deno.serve(async (req: Request) => {
@@ -58,18 +43,21 @@ Deno.serve(async (req: Request) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    const consumerKey = Deno.env.get("DARAJA_CONSUMER_KEY");
-    const consumerSecret = Deno.env.get("DARAJA_CONSUMER_SECRET");
-    const passkey = Deno.env.get("DARAJA_PASSKEY");
-    const shortcode = Deno.env.get("DARAJA_SHORTCODE");
-    const environment = Deno.env.get("DARAJA_ENV");
+    const payheroAuthToken = Deno.env.get("PAYHERO_AUTH_TOKEN")?.trim();
+    const channelIdRaw = Deno.env.get("PAYHERO_CHANNEL_ID")?.trim();
+    const channelId = Number(channelIdRaw);
 
     if (
-      !supabaseUrl || !anonKey || !serviceRoleKey ||
-      !consumerKey || !consumerSecret || !passkey || !shortcode ||
-      environment !== "sandbox"
+      !supabaseUrl ||
+      !anonKey ||
+      !serviceRoleKey ||
+      !payheroAuthToken ||
+      !channelIdRaw ||
+      !Number.isSafeInteger(channelId) ||
+      channelId <= 0
     ) {
-      console.error("M-Pesa configuration is incomplete.");
+      console.error("PayHero or Supabase configuration is incomplete.");
+
       return jsonResponse({
         error: "Server payment configuration is incomplete.",
       }, 500);
@@ -84,7 +72,10 @@ Deno.serve(async (req: Request) => {
     const accessToken = authorization.slice("Bearer ".length);
 
     const userClient = createClient(supabaseUrl, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
     });
 
     const { data: authData, error: authError } =
@@ -99,7 +90,10 @@ Deno.serve(async (req: Request) => {
     const user = authData.user;
 
     const admin = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
     });
 
     let body: Record<string, unknown>;
@@ -111,6 +105,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const gigId = Number(body.gig_id);
+
     const workerId = typeof body.worker_id === "string"
       ? body.worker_id.trim()
       : "";
@@ -121,11 +116,12 @@ Deno.serve(async (req: Request) => {
 
     if (!Number.isSafeInteger(gigId) || gigId <= 0 || !workerId || !phone) {
       return jsonResponse({
-        error: "Provide a valid gig ID, accepted worker, and Kenyan M-Pesa phone number.",
+        error:
+          "Provide a valid gig ID, accepted worker, and Kenyan M-Pesa phone number.",
       }, 400);
     }
 
-    // Retrieve the gig and price from the database.
+    // Retrieve the gig and agreed price from the database.
     const { data: gig, error: gigError } = await admin
       .from("gigs")
       .select("id, poster_id, status, agreed_price, payment_status")
@@ -161,9 +157,7 @@ Deno.serve(async (req: Request) => {
       }, 400);
     }
 
-    // Verify the specific worker selected in the dashboard. A gig may have
-    // multiple accepted workers, so never use maybeSingle() for all accepted
-    // applications without filtering by worker_id.
+    // Verify the selected worker has an accepted application.
     const { data: acceptedApplication, error: applicationError } =
       await admin
         .from("applications")
@@ -178,6 +172,7 @@ Deno.serve(async (req: Request) => {
         "Accepted application lookup failed:",
         applicationError.message,
       );
+
       return jsonResponse({
         error: "Could not verify the selected accepted worker.",
       }, 500);
@@ -185,10 +180,12 @@ Deno.serve(async (req: Request) => {
 
     if (!acceptedApplication) {
       return jsonResponse({
-        error: "The selected worker does not have an accepted application for this gig.",
+        error:
+          "The selected worker does not have an accepted application for this gig.",
       }, 409);
     }
 
+    // Find the existing payment record.
     const { data: transaction, error: transactionError } = await admin
       .from("payment_transactions")
       .select("id, worker_id, amount, status, checkout_request_id")
@@ -202,6 +199,7 @@ Deno.serve(async (req: Request) => {
         "Payment record lookup failed:",
         transactionError.message,
       );
+
       return jsonResponse({
         error: "Could not verify the payment record.",
       }, 500);
@@ -227,14 +225,14 @@ Deno.serve(async (req: Request) => {
       }, 409);
     }
 
-    // Reserve the transaction to prevent concurrent payment requests.
+    // Reserve the transaction to prevent duplicate requests.
     const { data: reserved, error: reserveError } = await admin
       .from("payment_transactions")
       .update({
         status: "initiating",
         phone_number: phone,
         payment_method: "M-Pesa",
-        provider: "Safaricom Daraja",
+        provider: "PayHero",
       })
       .eq("id", transaction.id)
       .eq("status", "pending")
@@ -254,149 +252,158 @@ Deno.serve(async (req: Request) => {
       }, 409);
     }
 
+    // Do not blindly retry a request that may have reached PayHero.
+    let payheroRequestSent = false;
+    let definitiveRejection = false;
+
     try {
-      // Request an OAuth access token from Daraja sandbox.
-      const tokenResponse = await fetch(
-        "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
-        {
-          headers: {
-            Authorization:
-              `Basic ${btoa(`${consumerKey}:${consumerSecret}`)}`,
-          },
-        },
-      );
-
-      if (!tokenResponse.ok) {
-        const authErrorText = await tokenResponse.text();
-
-        console.error("Daraja OAuth failed:", {
-          httpStatus: tokenResponse.status,
-          response: authErrorText.slice(0, 1000),
-        });
-
-        throw new Error(
-          `Daraja authentication failed (HTTP ${tokenResponse.status}).`,
-        );
-      }
-
-      const tokenData = await tokenResponse.json();
-
-      if (typeof tokenData.access_token !== "string") {
-        console.error("Daraja OAuth returned no access token.");
-        throw new Error("Daraja did not return an access token.");
-      }
-
-      const timestamp = kenyaTimestamp();
-      const password = btoa(`${shortcode}${passkey}${timestamp}`);
-
       const callbackUrl =
         `${supabaseUrl}/functions/v1/mpesa-callback`;
 
-      // Send the STK Push request.
-      const stkResponse = await fetch(
-        "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+      // Use the transaction ID as our unique external reference.
+      const externalReference = String(transaction.id);
+
+      const authHeader = payheroAuthToken.startsWith("Basic ")
+        ? payheroAuthToken
+        : `Basic ${payheroAuthToken}`;
+
+      const payheroPayload = {
+        amount,
+        phone_number: phone,
+        channel_id: channelId,
+        provider: "m-pesa",
+        external_reference: externalReference,
+        callback_url: callbackUrl,
+      };
+
+      // Set this immediately before sending the request.
+      payheroRequestSent = true;
+
+      const payheroResponse = await fetch(
+        "https://backend.payhero.co.ke/api/v2/payments",
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${tokenData.access_token}`,
+            Authorization: authHeader,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            BusinessShortCode: shortcode,
-            Password: password,
-            Timestamp: timestamp,
-            TransactionType: "CustomerPayBillOnline",
-            Amount: amount,
-            PartyA: phone,
-            PartyB: shortcode,
-            PhoneNumber: phone,
-            CallBackURL: callbackUrl,
-            AccountReference: `KL${gigId}W${workerId.replace(/-/g, "").slice(0, 6)}`.slice(0, 12),
-            TransactionDesc: "Kichele gig payment",
-          }),
+          body: JSON.stringify(payheroPayload),
         },
       );
 
-      const responseText = await stkResponse.text();
+      const responseText = await payheroResponse.text();
 
-      let stkData: Record<string, unknown>;
+      let payheroData: Record<string, unknown>;
 
       try {
-        stkData = JSON.parse(responseText);
+        payheroData = JSON.parse(responseText);
       } catch {
-        console.error("Daraja returned a non-JSON STK response:", {
-          httpStatus: stkResponse.status,
-          response: responseText.slice(0, 1000),
+        console.error("PayHero returned a non-JSON response:", {
+          httpStatus: payheroResponse.status,
+          response: responseText.slice(0, 500),
         });
 
+        // The request may have reached PayHero. Do not reset the
+        // transaction automatically when its outcome is uncertain.
         throw new Error(
-          `Daraja returned an unreadable response (HTTP ${stkResponse.status}).`,
+          `PayHero returned an unreadable response (HTTP ${payheroResponse.status}).`,
         );
       }
 
-      if (
-        !stkResponse.ok ||
-        stkData.ResponseCode !== "0" ||
-        typeof stkData.CheckoutRequestID !== "string" ||
-        typeof stkData.MerchantRequestID !== "string"
-      ) {
-        // Log useful diagnostics without exposing credentials or access tokens.
-        console.error("Daraja STK Push rejection:", {
-          httpStatus: stkResponse.status,
-          errorCode: stkData.errorCode ?? null,
-          errorMessage: stkData.errorMessage ?? null,
-          responseCode: stkData.ResponseCode ?? null,
-          responseDescription: stkData.ResponseDescription ?? null,
-          customerMessage: stkData.CustomerMessage ?? null,
+      const checkoutRequestId =
+        typeof payheroData.CheckoutRequestID === "string"
+          ? payheroData.CheckoutRequestID
+          : "";
+
+      const payheroReference =
+        typeof payheroData.reference === "string"
+          ? payheroData.reference
+          : "";
+
+      const requestAccepted =
+        payheroResponse.ok &&
+        payheroData.success === true &&
+        checkoutRequestId.length > 0;
+
+      if (!requestAccepted) {
+        // Only treat a structured HTTP 4xx response as a definite
+        // rejection. A timeout, 5xx, or ambiguous response is uncertain.
+        if (
+          payheroResponse.status >= 400 &&
+          payheroResponse.status < 500
+        ) {
+          definitiveRejection = true;
+        }
+
+        console.error("PayHero payment request was not confirmed:", {
+          httpStatus: payheroResponse.status,
+          status: payheroData.status ?? null,
+          error: payheroData.error ?? payheroData.message ?? null,
         });
 
-        const reason =
-          typeof stkData.errorMessage === "string"
-            ? stkData.errorMessage
-            : typeof stkData.ResponseDescription === "string"
-            ? stkData.ResponseDescription
-            : typeof stkData.errorCode === "string"
-            ? stkData.errorCode
-            : `Safaricom rejected the request (HTTP ${stkResponse.status}). Check the function logs.`;
-
-        throw new Error(`STK Push rejected: ${reason}`);
+        throw new Error(
+          definitiveRejection
+            ? "PayHero rejected the payment request."
+            : "PayHero did not confirm whether the payment request was accepted.",
+        );
       }
 
-      // Store the identifiers returned by Safaricom.
-      const { error: saveError } = await admin
+      // Save PayHero's identifiers against the reserved transaction.
+      const { data: savedTransaction, error: saveError } = await admin
         .from("payment_transactions")
         .update({
           status: "pending",
-          checkout_request_id: stkData.CheckoutRequestID,
-          merchant_request_id: stkData.MerchantRequestID,
+          checkout_request_id: checkoutRequestId,
+          merchant_request_id: payheroReference || null,
         })
         .eq("id", transaction.id)
-        .eq("status", "initiating");
+        .eq("status", "initiating")
+        .is("checkout_request_id", null)
+        .select("id")
+        .maybeSingle();
 
-      if (saveError) {
-        // Safaricom may already be processing this request.
+      if (saveError || !savedTransaction) {
         console.error(
-          "Accepted STK request could not be saved:",
-          saveError.message,
+          "Accepted PayHero request could not be saved:",
+          saveError?.message ?? "Transaction was not updated",
         );
 
         return jsonResponse({
           error:
-            "Safaricom accepted the request, but its tracking record needs attention. Do not retry yet.",
+            "PayHero may have accepted the request, but its tracking record needs attention. Do not retry this payment.",
         }, 500);
       }
 
       return jsonResponse({
         success: true,
+        status: "pending",
         message:
-          "STK Push requested. Check your phone and enter your M-Pesa PIN in the official prompt.",
+          "M-Pesa payment prompt requested. Check your phone and follow the official payment prompt. The gig will only be marked paid after payment confirmation.",
       });
     } catch (error) {
-      // Never assume an uncertain request failed safely enough to retry.
       console.error(
-        "STK Push request failed or had an uncertain result:",
+        "PayHero payment request failed or had an uncertain result:",
         error instanceof Error ? error.message : "Unknown error",
       );
+
+      // Restore the transaction only if no request was sent, or PayHero
+      // explicitly rejected it with a structured HTTP 4xx response.
+      // Keep uncertain requests reserved to prevent duplicate charges.
+      if (!payheroRequestSent || definitiveRejection) {
+        const { error: recoveryError } = await admin
+          .from("payment_transactions")
+          .update({ status: "pending" })
+          .eq("id", transaction.id)
+          .eq("status", "initiating")
+          .is("checkout_request_id", null);
+
+        if (recoveryError) {
+          console.error(
+            "Could not restore rejected/unsubmitted payment transaction:",
+            recoveryError.message,
+          );
+        }
+      }
 
       return jsonResponse({
         error:
@@ -405,7 +412,7 @@ Deno.serve(async (req: Request) => {
     }
   } catch (error) {
     console.error(
-      "STK Push function error:",
+      "PayHero STK Push function error:",
       error instanceof Error ? error.message : "Unknown error",
     );
 

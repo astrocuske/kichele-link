@@ -4,71 +4,132 @@
 	import { supabase } from '#lib/supabase/client.ts';
 
 	let userId = $state('');
-    let email = $state('');
-    let fullName = $state('');
-    let phone = $state('');
-    let location = $state('');
+	let email = $state('');
+	let fullName = $state('');
+	let phone = $state('');
+	let location = $state('');
 
-    let loading = $state(true);
-    let saving = $state(false);
-    let message = $state('');
-    let error = $state('');
+	let loading = $state(true);
+	let saving = $state(false);
+	let message = $state('');
+	let error = $state('');
 
 	onMount(async () => {
-		const {
-			data: { user },
-			error: authError
-		} = await supabase.auth.getUser();
+		try {
+			const {
+				data: { user },
+				error: authError
+			} = await supabase.auth.getUser();
 
-		if (authError || !user) {
+			if (authError || !user) {
+				goto('/login');
+				return;
+			}
+
+			userId = user.id;
+			email = user.email ?? '';
+
+			const { data: profile, error: profileError } = await supabase
+				.from('profiles')
+				.select('full_name, phone, location')
+				.eq('user_id', user.id)
+				.maybeSingle();
+
+			if (profileError) {
+				console.error('Profile load failed:', profileError);
+				error = `${profileError.message} (Code: ${profileError.code ?? 'unknown'})`;
+				return;
+			}
+
+			if (profile) {
+				fullName = profile.full_name ?? '';
+				phone = profile.phone ?? '';
+				location = profile.location ?? '';
+			} else {
+				fullName = user.user_metadata?.full_name ?? '';
+			}
+		} catch (loadError) {
+			console.error('Profile loading error:', loadError);
+			error = 'Something went wrong while loading your profile.';
+		} finally {
+			loading = false;
+		}
+	});
+
+	async function saveProfile(event: SubmitEvent) {
+		event.preventDefault();
+
+		if (saving) return;
+
+		error = '';
+		message = '';
+
+		const cleanedName = fullName.trim();
+		const cleanedPhone = phone.trim();
+		const cleanedLocation = location.trim();
+
+		if (!cleanedName) {
+			error = 'Please enter your full name.';
+			return;
+		}
+
+		if (cleanedName.length > 100) {
+			error = 'Your name must be 100 characters or fewer.';
+			return;
+		}
+
+		if (cleanedPhone.length > 20) {
+			error = 'Your phone number must be 20 characters or fewer.';
+			return;
+		}
+
+		if (cleanedLocation.length > 100) {
+			error = 'Your location must be 100 characters or fewer.';
+			return;
+		}
+
+		if (!userId) {
+			error = 'Your session has expired. Please sign in again.';
 			goto('/login');
 			return;
 		}
 
-		userId = user.id;
-		email = user.email ?? '';
-
-		const { data: profile, error: profileError } = await supabase
-			.from('profiles')
-			.select('full_name, phone, location')
-			.eq('user_id', user.id)
-			.single();
-
-		if (profileError && profileError.code !== 'PGRST116') {
-			error = profileError.message;
-		}
-
-		if (profile) {
-			fullName = profile.full_name ?? '';
-			phone = profile.phone ?? '';
-			location = profile.location ?? '';
-		}
-
-		loading = false;
-	});
-
-	async function saveProfile() {
-		error = '';
-		message = '';
 		saving = true;
 
-		const { error: updateError } = await supabase
-			.from('profiles')
-			.update({
-				full_name: fullName.trim(),
-				phone: phone.trim(),
-				location: location.trim()
-			})
-			.eq('user_id', userId);
+		try {
+			const { error: saveError } = await supabase
+				.from('profiles')
+				.upsert(
+					{
+						user_id: userId,
+						full_name: cleanedName,
+						phone: cleanedPhone || null,
+						location: cleanedLocation || null
+					},
+					{
+						onConflict: 'user_id'
+					}
+				);
 
-		saving = false;
+			if (saveError) {
+				console.error('Profile save failed:', saveError);
 
-		if (updateError) {
-			error = updateError.message;
-			return;
+				error = `${saveError.message} (Code: ${saveError.code ?? 'unknown'})`;
+				return;
+			}
+
+			fullName = cleanedName;
+			phone = cleanedPhone;
+			location = cleanedLocation;
+
+			message = 'Your profile has been saved successfully.';
+		} catch (saveError) {
+			console.error('Profile saving error:', saveError);
+
+			error = 'Something went wrong while saving your profile.';
+		} finally {
+			saving = false;
 		}
-
-		message = 'Profile updated successfully.';
 	}
 </script>
 
@@ -82,7 +143,7 @@
 
 <div class="min-h-screen bg-slate-50 text-slate-900">
 	<header class="border-b border-slate-200 bg-white">
-		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+		<div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
 			<a href="/" class="flex items-center gap-3">
 				<div
 					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white"
@@ -96,17 +157,17 @@
 				</div>
 			</a>
 
-			<nav class="flex items-center gap-3">
+			<nav class="flex flex-wrap items-center gap-2 sm:gap-3">
 				<a
 					href="/dashboard"
-					class="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+					class="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
 				>
 					Dashboard
 				</a>
 
 				<a
 					href="/gigs"
-					class="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+					class="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
 				>
 					Find Gigs
 				</a>
@@ -141,39 +202,56 @@
 						Account email
 					</p>
 
-					<p class="mt-2 font-semibold text-slate-900">{email}</p>
+					<p class="mt-2 break-all font-semibold text-slate-900">
+						{email || 'No email available'}
+					</p>
 
 					<p class="mt-1 text-sm text-slate-500">
 						Your login email cannot be changed here.
 					</p>
 				</div>
 
-				<form onsubmit={(event) => { event.preventDefault(); saveProfile(); }} class="space-y-6">
+				<form onsubmit={saveProfile} class="space-y-6">
 					<div>
-						<label for="fullName" class="mb-2 block text-sm font-bold text-slate-700">
-							Full name
+						<label
+							for="fullName"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Full name <span class="text-red-600">*</span>
 						</label>
 
 						<input
 							id="fullName"
+							name="fullName"
 							type="text"
 							bind:value={fullName}
+							maxlength={100}
+							autocomplete="name"
 							placeholder="Enter your full name"
-							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100"
+							required
+							disabled={saving}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
 						/>
 					</div>
 
 					<div>
-						<label for="phone" class="mb-2 block text-sm font-bold text-slate-700">
+						<label
+							for="phone"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
 							Phone number
 						</label>
 
 						<input
 							id="phone"
+							name="phone"
 							type="tel"
 							bind:value={phone}
+							maxlength={20}
+							autocomplete="tel"
 							placeholder="e.g. 0712345678"
-							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100"
+							disabled={saving}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
 						/>
 
 						<p class="mt-2 text-xs text-slate-500">
@@ -182,27 +260,40 @@
 					</div>
 
 					<div>
-						<label for="location" class="mb-2 block text-sm font-bold text-slate-700">
+						<label
+							for="location"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
 							Location
 						</label>
 
 						<input
 							id="location"
+							name="location"
 							type="text"
 							bind:value={location}
-							placeholder="e.g. Pipeline, Nakuru"
-							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100"
+							maxlength={100}
+							autocomplete="address-level2"
+							placeholder="e.g. Gilgil, Nakuru"
+							disabled={saving}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
 						/>
 					</div>
 
 					{#if error}
-						<div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+						<div
+							role="alert"
+							class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+						>
 							{error}
 						</div>
 					{/if}
 
 					{#if message}
-						<div class="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+						<div
+							role="status"
+							class="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700"
+						>
 							{message}
 						</div>
 					{/if}
@@ -213,7 +304,7 @@
 							disabled={saving}
 							class="rounded-xl bg-green-600 px-6 py-3 font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
 						>
-							{saving ? 'Saving...' : 'Save changes'}
+							{saving ? 'Saving profile...' : 'Save changes'}
 						</button>
 
 						<a

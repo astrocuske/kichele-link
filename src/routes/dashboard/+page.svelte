@@ -39,7 +39,6 @@
     let acceptingApplicationId = $state<number | null>(null);
     let agreedPriceInput = $state('');
 
-    // M-Pesa payment state: track each worker separately.
     let mpesaPhoneNumbers = $state<Record<string, string>>({});
     let initiatingPaymentKey = $state<string | null>(null);
     let refreshingPaymentKey = $state<string | null>(null);
@@ -306,7 +305,7 @@
 
         if (!user) {
             errorMessage =
-                'Your session is not ready. Please refresh the page and try again.';
+                'Your session is not ready. Please sign in again.';
             return;
         }
 
@@ -334,10 +333,6 @@
         updatingApplicationId = applicationId;
 
         try {
-            /*
-             * Step 1: Close the gig.
-             * The returned row confirms that this update actually happened.
-             */
             const { data: closedGig, error: gigError } = await supabase
                 .from('gigs')
                 .update({
@@ -361,10 +356,6 @@
                 return;
             }
 
-            /*
-             * Step 2: Accept the application.
-             * The returned row confirms that a pending application was updated.
-             */
             const {
                 data: updatedApplication,
                 error: applicationError
@@ -381,10 +372,6 @@
                 !updatedApplication ||
                 updatedApplication.length === 0
             ) {
-                /*
-                 * Acceptance failed. Attempt to reopen the gig, but only
-                 * if it is still closed at the agreed price set above.
-                 */
                 const { data: reopenedGig, error: rollbackError } =
                     await supabase
                         .from('gigs')
@@ -418,9 +405,6 @@
                 return;
             }
 
-            /*
-             * Step 3: Update the local dashboard after acceptance succeeds.
-             */
             gigs = gigs.map((item) =>
                 item.id === gigId
                     ? {
@@ -438,10 +422,6 @@
                     : item
             );
 
-            /*
-             * Step 4: Create the pending payment record.
-             * The M-Pesa Edge Function and callback flow remain unchanged.
-             */
             const { error: paymentError } = await supabase
                 .from('payment_transactions')
                 .insert({
@@ -557,7 +537,6 @@
         goto('/login');
     }
 
-    // Initiate an M-Pesa STK Push for one specific accepted worker.
     async function initiateMpesaPayment(gigId: number, workerId: string) {
         const key = paymentKey(gigId, workerId);
         paymentMessages[key] = '';
@@ -643,7 +622,6 @@
         }
     }
 
-    // Refresh the payment status for one specific worker.
     async function refreshPaymentStatus(gigId: number, workerId: string) {
         const key = paymentKey(gigId, workerId);
 
@@ -700,9 +678,9 @@
             gigs = gigs.map((item) =>
                 item.id === gigId
                     ? {
-                        ...item,
-                        payment_status: gigData.payment_status as 'unpaid' | 'paid'
-                    }
+                          ...item,
+                          payment_status: gigData.payment_status as 'unpaid' | 'paid'
+                      }
                     : item
             );
 
@@ -784,12 +762,23 @@
                     Manage your gigs and review applications.
                 </p>
             </div>
-            <a
-                href="/post-gig"
-                class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
-            >
-                + Post a Gig
-            </a>
+
+            <div class="flex flex-wrap gap-3">
+                <button
+                    type="button"
+                    onclick={() => window.location.reload()}
+                    class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-100"
+                >
+                    ↻ Refresh Dashboard
+                </button>
+
+                <a
+                    href="/post-gig"
+                    class="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+                >
+                    + Post a Gig
+                </a>
+            </div>
         </div>
 
         <div class="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -797,18 +786,21 @@
                 <p class="text-sm font-medium text-slate-500">Total gigs</p>
                 <p class="mt-2 text-2xl font-black text-slate-950">{gigs.length}</p>
             </div>
+
             <div class="rounded-2xl border border-green-200 bg-green-50 p-5 shadow-sm">
                 <p class="text-sm font-medium text-green-700">Open gigs</p>
                 <p class="mt-2 text-2xl font-black text-green-800">
                     {gigs.filter((gig) => gig.status === 'open').length}
                 </p>
             </div>
+
             <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <p class="text-sm font-medium text-slate-500">Closed gigs</p>
                 <p class="mt-2 text-2xl font-black text-slate-950">
                     {gigs.filter((gig) => gig.status === 'closed').length}
                 </p>
             </div>
+
             <div class="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
                 <p class="text-sm font-medium text-blue-700">Completed gigs</p>
                 <p class="mt-2 text-2xl font-black text-blue-800">

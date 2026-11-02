@@ -1,56 +1,56 @@
-# sv
+# Kichele Link
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Pata Kazi, Pata Kichele.
 
-## Creating a project
+Kichele Link is a gig marketplace that connects people who need tasks
+completed with people who are available to perform them.
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Stack
 
-```sh
-# create a new project
-npx sv create my-app
-```
+| Layer    | Technology                                     | Location               |
+| -------- | ---------------------------------------------- | ---------------------- |
+| Frontend | SvelteKit + TypeScript + Tailwind              | `src/`                 |
+| Backend  | Supabase Edge Functions (Deno) + database RPCs | `supabase/functions/`  |
+| Database | Supabase PostgreSQL + SQL migrations + RLS     | `supabase/migrations/` |
 
-To recreate this project with the same configuration:
+The complete system map — routes, payment flow, contracts between the
+layers, and the current state of the M-Pesa STK push integration — is
+documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-```sh
-# recreate this project
-pnpm dlx sv@1.1.1 create --template minimal --types ts --add prettier eslint vitest="usages:unit,component" playwright="demo:no" tailwindcss="plugins:none" --install pnpm app
-```
+## Payment integration
 
-## Adding features
+Payments use per-application pricing (`applications.agreed_price`) and
+M-Pesa STK push via PayHero:
 
-Add features to your project with `sv add`:
+1. Accept an application → the `accept_application` RPC creates its
+   pending `payment_transactions` row.
+2. Poster dashboard "Pay Worker" → the `mpesa-stk-push` Edge Function
+   starts a PayHero STK push for that application.
+3. PayHero → the `mpesa-callback` Edge Function verifies and records the
+   payment, then reconciles the gig's payment status.
 
-```sh
-npx sv add
-```
-
-For example, to add Tailwind CSS:
-
-```sh
-npx sv add tailwindcss
-```
+Required server secrets: `PAYHERO_AUTH_TOKEN` and `PAYHERO_CHANNEL_ID`.
+See `ARCHITECTURE.md` and `supabase/migrations/README.md` for details.
 
 ## Developing
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+```sh
+npm install
+npm run dev
+```
+
+## Checks
 
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+npm run check       # svelte typecheck
+npm run lint        # prettier + eslint
+npm run test        # unit tests (vitest)
 ```
 
 ## Building
 
-To create a production version of your app:
+Create a production build:
 
 ```sh
 npm run build
 ```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.

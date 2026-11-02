@@ -99,13 +99,9 @@
 						Why Kichele Link
 					</a>
 
-					<a href="#about" class="rounded-lg px-3 py-2 font-semibold hover:bg-slate-50">
-						About
-					</a>
+					<a href="#about" class="rounded-lg px-3 py-2 font-semibold hover:bg-slate-50"> About </a>
 
-					<a href="/login" class="rounded-lg px-3 py-2 font-semibold hover:bg-slate-50">
-						Log In
-					</a>
+					<a href="/login" class="rounded-lg px-3 py-2 font-semibold hover:bg-slate-50"> Log In </a>
 
 					<a
 						href="/signup"
@@ -120,13 +116,9 @@
 
 	<!-- Hero -->
 	<section class="relative overflow-hidden bg-white">
-		<div
-			class="absolute -right-32 -top-32 h-80 w-80 rounded-full bg-blue-100 blur-3xl"
-		></div>
+		<div class="absolute -top-32 -right-32 h-80 w-80 rounded-full bg-blue-100 blur-3xl"></div>
 
-		<div
-			class="absolute -bottom-32 -left-32 h-80 w-80 rounded-full bg-emerald-100 blur-3xl"
-		></div>
+		<div class="absolute -bottom-32 -left-32 h-80 w-80 rounded-full bg-emerald-100 blur-3xl"></div>
 
 		<div
 			class="relative mx-auto grid max-w-7xl items-center gap-12 px-6 py-20 lg:grid-cols-2 lg:py-28"
@@ -138,14 +130,14 @@
 					🛠️ Jobs, skills and opportunities in one place
 				</div>
 
-				<h1 class="max-w-3xl text-5xl font-black leading-tight tracking-tight sm:text-6xl">
+				<h1 class="max-w-3xl text-5xl leading-tight font-black tracking-tight sm:text-6xl">
 					Find a gig.
 					<span class="text-blue-600">Get the job done.</span>
 				</h1>
 
 				<p class="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-					Kichele Link connects people who need quick jobs done with people ready to work.
-					Whether you need help or you're looking for an opportunity, you can start here.
+					Kichele Link connects people who need quick jobs done with people ready to work. Whether
+					you need help or you're looking for an opportunity, you can start here.
 				</p>
 
 				<div class="mt-8 flex flex-col gap-4 sm:flex-row">
@@ -181,15 +173,13 @@
 						class="h-[430px] w-full object-cover"
 					/>
 
-					<div class="absolute bottom-6 left-6 right-6 rounded-2xl border border-white/60 bg-white/95 p-5 shadow-xl backdrop-blur">
+					<div
+						class="absolute right-6 bottom-6 left-6 rounded-2xl border border-white/60 bg-white/95 p-5 shadow-xl backdrop-blur"
+					>
 						<div class="flex items-center justify-between">
 							<div>
-								<p class="text-xs font-bold uppercase tracking-wider text-blue-600">
-									Kichele Link
-								</p>
-								<p class="mt-1 font-bold text-slate-900">
-									Connecting work with opportunity.
-								</p>
+								<p class="text-xs font-bold tracking-wider text-blue-600 uppercase">Kichele Link</p>
+								<p class="mt-1 font-bold text-slate-900">Connecting work with opportunity.</p>
 							</div>
 
 							<div class="text-3xl">🤝</div>
@@ -204,18 +194,16 @@
 	<section id="problem" class="bg-slate-50 py-20">
 		<div class="mx-auto max-w-7xl px-6">
 			<div class="mx-auto max-w-3xl text-center">
-				<p class="text-sm font-black uppercase tracking-widest text-blue-600">
-					The Problem
-				</p>
+				<p class="text-sm font-black tracking-widest text-blue-600 uppercase">The Problem</p>
 
 				<h2 class="mt-3 text-4xl font-black tracking-tight text-slate-900">
 					Getting small jobs done shouldn't be difficult.
 				</h2>
 
 				<p class="mt-5 text-lg leading-8 text-slate-600">
-					Every day, people need help with ordinary tasks. At the same time, skilled
-					people are looking for ways to earn. Finding the right person or the right
-					opportunity can be difficult.
+					Every day, people need help with ordinary tasks. At the same time, skilled people are
+					looking for ways to earn. Finding the right person or the right opportunity can be
+					difficult.
 				</p>
 			</div>
 
@@ -226,8 +214,8 @@
 					<h3 class="text-2xl font-black">You need something done</h3>
 
 					<p class="mt-3 leading-7 text-slate-600">
-						Maybe you need someone to clean your house, repair something, deliver an item,
-						cut grass, fix a computer, or help with another task.
+						Maybe you need someone to clean your house, repair something, deliver an item, cut
+						grass, fix a computer, or help with another task.
 					</p>
 
 					<p class="mt-4 font-semibold text-slate-800">
@@ -241,8 +229,8 @@
 					<h3 class="text-2xl font-black">You have a skill to offer</h3>
 
 					<p class="mt-3 leading-7 text-slate-600">
-						Maybe you're good at cleaning, repairs, technology, transport, delivery,
-						gardening, construction, or another useful skill.
+						Maybe you're good at cleaning, repairs, technology, transport, delivery, gardening,
+						construction, or another useful skill.
 					</p>
 
 					<p class="mt-4 font-semibold text-slate-800">
@@ -257,22 +245,21 @@
 	<section id="about" class="bg-white py-20">
 		<div class="mx-auto grid max-w-7xl items-center gap-12 px-6 lg:grid-cols-2">
 			<div>
-				<p class="text-sm font-black uppercase tracking-widest text-emerald-600">
-					The Solution
-				</p>
+				<p class="text-sm font-black tracking-widest text-emerald-600 uppercase">The Solution</p>
 
 				<h2 class="mt-3 text-4xl font-black tracking-tight">
 					One simple place to connect work with people.
 				</h2>
 
 				<p class="mt-5 text-lg leading-8 text-slate-600">
-					Kichele Link brings people who need work done together with people who are
-					ready to work.
+					Kichele Link brings people who need work done together with people who are ready to work.
 				</p>
 
 				<div class="mt-8 space-y-5">
 					<div class="flex gap-4">
-						<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
+						<div
+							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700"
+						>
 							1
 						</div>
 						<div>
@@ -284,7 +271,9 @@
 					</div>
 
 					<div class="flex gap-4">
-						<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
+						<div
+							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700"
+						>
 							2
 						</div>
 						<div>
@@ -296,7 +285,9 @@
 					</div>
 
 					<div class="flex gap-4">
-						<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
+						<div
+							class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700"
+						>
 							3
 						</div>
 						<div>
@@ -333,22 +324,16 @@
 	<section id="how-it-works" class="bg-slate-900 py-20 text-white">
 		<div class="mx-auto max-w-7xl px-6">
 			<div class="mx-auto max-w-3xl text-center">
-				<p class="text-sm font-black uppercase tracking-widest text-blue-400">
-					How It Works
-				</p>
+				<p class="text-sm font-black tracking-widest text-blue-400 uppercase">How It Works</p>
 
-				<h2 class="mt-3 text-4xl font-black">
-					Simple from start to finish.
-				</h2>
+				<h2 class="mt-3 text-4xl font-black">Simple from start to finish.</h2>
 			</div>
 
 			<div class="mt-12 grid gap-6 md:grid-cols-4">
 				<div class="rounded-2xl border border-white/10 bg-white/5 p-6">
 					<div class="text-3xl">📝</div>
 					<h3 class="mt-5 text-xl font-bold">Post</h3>
-					<p class="mt-2 text-sm leading-6 text-slate-300">
-						Tell people what job you need done.
-					</p>
+					<p class="mt-2 text-sm leading-6 text-slate-300">Tell people what job you need done.</p>
 				</div>
 
 				<div class="rounded-2xl border border-white/10 bg-white/5 p-6">
@@ -382,13 +367,11 @@
 	<section class="bg-slate-50 py-20">
 		<div class="mx-auto max-w-7xl px-6">
 			<div class="mx-auto max-w-3xl text-center">
-				<p class="text-sm font-black uppercase tracking-widest text-blue-600">
+				<p class="text-sm font-black tracking-widest text-blue-600 uppercase">
 					Built for both sides
 				</p>
 
-				<h2 class="mt-3 text-4xl font-black">
-					Are you looking for work or looking for someone?
-				</h2>
+				<h2 class="mt-3 text-4xl font-black">Are you looking for work or looking for someone?</h2>
 			</div>
 
 			<div class="mt-12 grid gap-8 lg:grid-cols-2">
@@ -398,8 +381,8 @@
 					<h3 class="mt-5 text-2xl font-black">I'm looking for work</h3>
 
 					<p class="mt-3 leading-7 text-slate-600">
-						Find available gigs, read the details, apply for work, and track jobs
-						where your application has been accepted.
+						Find available gigs, read the details, apply for work, and track jobs where your
+						application has been accepted.
 					</p>
 
 					<button
@@ -417,8 +400,8 @@
 					<h3 class="mt-5 text-2xl font-black">I need someone</h3>
 
 					<p class="mt-3 leading-7 text-slate-600">
-						Post your task, receive applications, choose a worker, agree on the
-						price, and manage the job.
+						Post your task, receive applications, choose a worker, agree on the price, and manage
+						the job.
 					</p>
 
 					<button
@@ -436,13 +419,11 @@
 	<!-- CTA -->
 	<section class="bg-blue-600 py-20 text-white">
 		<div class="mx-auto max-w-4xl px-6 text-center">
-			<h2 class="text-4xl font-black tracking-tight sm:text-5xl">
-				Ready to get started?
-			</h2>
+			<h2 class="text-4xl font-black tracking-tight sm:text-5xl">Ready to get started?</h2>
 
 			<p class="mx-auto mt-5 max-w-2xl text-lg leading-8 text-blue-100">
-				Whether you need a job done or you're looking for your next opportunity,
-				Kichele Link gives you a simple place to start.
+				Whether you need a job done or you're looking for your next opportunity, Kichele Link gives
+				you a simple place to start.
 			</p>
 
 			<div class="mt-8 flex flex-col justify-center gap-4 sm:flex-row">
@@ -467,15 +448,15 @@
 
 	<!-- Footer -->
 	<footer class="bg-slate-950 py-10 text-slate-400">
-		<div class="mx-auto flex max-w-7xl flex-col gap-6 px-6 md:flex-row md:items-center md:justify-between">
+		<div
+			class="mx-auto flex max-w-7xl flex-col gap-6 px-6 md:flex-row md:items-center md:justify-between"
+		>
 			<div>
 				<p class="font-bold text-white">Kichele Link</p>
 				<p class="mt-1 text-sm">Pata Kazi, Pata Kichele.</p>
 			</div>
 
-			<div class="text-sm">
-				© 2026 Kichele Link. Connect. Work. Earn.
-			</div>
+			<div class="text-sm">© 2026 Kichele Link. Connect. Work. Earn.</div>
 		</div>
 	</footer>
 </div>

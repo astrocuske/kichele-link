@@ -1,0 +1,1405 @@
+===== GIT STATUS =====
+## main...origin/main
+ M src/routes/dashboard/+page.svelte
+ M src/routes/gigs/+page.svelte
+ M src/routes/marketplace/+page.svelte
+ M src/routes/profile/+page.svelte
+?? kichele-link-before-mpesa.patch
+?? kichele-link-security-review.txt
+?? src/lib/supabase/client.ts.save
+?? src/routes/dashboard/+page.svelte.backup
+?? src/routes/dashboard/+page.svelte.save
+?? supabase/audit/
+?? supabase/migrations/002_lock_down_rls.sql
+
+===== DIFF STAT =====
+ src/routes/dashboard/+page.svelte   | 105 ++++++++++++++++++++++++++----------
+ src/routes/gigs/+page.svelte        |   8 +--
+ src/routes/marketplace/+page.svelte |   2 +-
+ src/routes/profile/+page.svelte     |  34 ++++++------
+ 4 files changed, 97 insertions(+), 52 deletions(-)
+
+===== FRONTEND DIFF =====
+diff --git a/src/routes/dashboard/+page.svelte b/src/routes/dashboard/+page.svelte
+index efa7fc6..6dc3484 100644
+--- a/src/routes/dashboard/+page.svelte
++++ b/src/routes/dashboard/+page.svelte
+@@ -39,7 +39,8 @@
+     let acceptingApplicationId = $state<number | null>(null);
+     let agreedPriceInput = $state('');
+ 
+-    let mpesaPhoneNumbers = $state<Record<string, string>>({});
++    let posterPhone = $state('');
++    let posterPhoneError = $state('');
+     let initiatingPaymentKey = $state<string | null>(null);
+     let refreshingPaymentKey = $state<string | null>(null);
+     let paymentMessages = $state<Record<string, string>>({});
+@@ -62,6 +63,29 @@
+ 
+             user = currentUser;
+ 
++            // Load the signed-in gig poster's own saved phone number.
++            // The get_my_profile RPC respects the protected profiles table.
++            const { data: profileData, error: profileError } = await supabase.rpc(
++                'get_my_profile'
++            );
++
++            if (profileError) {
++                console.error('Poster profile load failed:', profileError);
++                posterPhoneError =
++                    'Could not load your saved phone number. Please check your profile.';
++            } else {
++                const profile = (
++                    profileData as { phone: string | null }[] | null
++                )?.[0] ?? null;
++
++                posterPhone = profile?.phone?.trim() ?? '';
++
++                if (!posterPhone) {
++                    posterPhoneError =
++                        'Please add your phone number to your profile before requesting payment.';
++                }
++            }
++
+             const { data: userGigs, error: gigsError } = await supabase
+                 .from('gigs')
+                 .select(
+@@ -106,11 +130,11 @@
+                 )
+             ];
+ 
+-            if (workerIds.length > 0) {
+-                const { data: profiles, error: profilesError } = await supabase
+-                    .from('profiles')
+-                    .select('user_id, full_name')
+-                    .in('user_id', workerIds);
++                if (workerIds.length > 0) {
++                    const { data: profiles, error: profilesError } = await supabase
++                        .from('public_profile')
++                        .select('user_id, full_name')
++                        .in('user_id', workerIds);
+ 
+                 if (profilesError) {
+                     errorMessage = profilesError.message;
+@@ -541,10 +565,12 @@
+         const key = paymentKey(gigId, workerId);
+         paymentMessages[key] = '';
+ 
+-        const phone = mpesaPhoneNumbers[key]?.trim();
++        const phone = posterPhone.trim();
+ 
+         if (!phone) {
+-            paymentMessages[key] = 'Please enter the worker payment phone number.';
++            paymentMessages[key] =
++                posterPhoneError ||
++                'Please add your phone number to your profile before requesting payment.';
+             return;
+         }
+ 
+@@ -909,7 +935,7 @@
+                                         )}
+                                         <div class="mt-5 space-y-4">
+                                             <h4 class="font-bold text-slate-900">
+-                                                Pay accepted workers
++                                                Pay for accepted work
+                                             </h4>
+ 
+                                             <p class="text-sm text-slate-600">
+@@ -932,31 +958,50 @@
+                                                     </h5>
+ 
+                                                     <p class="mt-1 text-sm text-slate-600">
+-                                                        Amount due: KSh
++                                                        Amount to pay: KSh
+                                                         {gig.agreed_price?.toLocaleString() ?? 'Not set'}
+                                                     </p>
+ 
+-                                                    <label
+-                                                        for={`mpesa-phone-${key}`}
+-                                                        class="mt-4 block text-sm font-semibold text-slate-700"
+-                                                    >
+-                                                        Worker’s M-Pesa phone number
+-                                                    </label>
+-
+-                                                    <input
+-                                                        id={`mpesa-phone-${key}`}
+-                                                        type="tel"
+-                                                        autocomplete="tel"
+-                                                        inputmode="tel"
+-                                                        placeholder="e.g. 0712345678"
+-                                                        bind:value={mpesaPhoneNumbers[key]}
+-                                                        class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-green-500"
+-                                                    />
++                                                    <div class="mt-4 rounded-xl border border-green-200 bg-white p-4">
++                                                        <p class="text-sm font-semibold text-slate-700">
++                                                            Your M-Pesa number (payer)
++                                                        </p>
++
++                                                        {#if posterPhone}
++                                                            <p class="mt-1 font-bold text-slate-900">
++                                                                {posterPhone}
++                                                            </p>
++
++                                                            <p class="mt-1 text-xs leading-5 text-slate-500">
++                                                                The STK Push will be sent to this saved number.
++                                                                Confirm that it belongs to you before continuing.
++                                                            </p>
++
++                                                            <a
++                                                                href="/profile"
++                                                                class="mt-2 inline-block text-xs font-bold text-blue-700 hover:underline"
++                                                            >
++                                                                Change saved number
++                                                            </a>
++                                                        {:else}
++                                                            <p class="mt-1 text-sm text-red-600">
++                                                                {posterPhoneError || 'Add your phone number to your profile.'}
++                                                            </p>
++
++                                                            <a
++                                                                href="/profile"
++                                                                class="mt-2 inline-block text-sm font-bold text-blue-700 hover:underline"
++                                                            >
++                                                                Update your profile
++                                                            </a>
++                                                        {/if}
++                                                    </div>
+ 
+                                                     <button
+                                                         type="button"
+                                                         disabled={
+                                                             initiatingPaymentKey !== null ||
++                                                            !posterPhone.trim() ||
+                                                             gig.agreed_price === null ||
+                                                             gig.agreed_price < 1
+                                                         }
+@@ -969,7 +1014,7 @@
+                                                     >
+                                                         {initiatingPaymentKey === key
+                                                             ? 'Requesting payment...'
+-                                                            : 'Pay this worker with M-Pesa'}
++                                                            : 'Request M-Pesa payment'}
+                                                     </button>
+ 
+                                                     <button
+@@ -984,7 +1029,7 @@
+                                                     >
+                                                         {refreshingPaymentKey === key
+                                                             ? 'Checking status...'
+-                                                            : 'Refresh this worker’s payment'}
++                                                            : 'Refresh payment status'}
+                                                     </button>
+ 
+                                                     {#if paymentMessages[key]}
+@@ -997,7 +1042,9 @@
+                                                     {/if}
+ 
+                                                     <p class="mt-3 text-xs leading-5 text-slate-500">
+-                                                        Only enter your PIN in the official M-Pesa prompt on your phone.
++                                                        This request collects payment from your M-Pesa account;
++                                                        it does not transfer money directly to the worker.
++                                                        Only enter your PIN in the official M-Pesa prompt.
+                                                         Never share your PIN with anyone.
+                                                     </p>
+                                                 </div>
+diff --git a/src/routes/gigs/+page.svelte b/src/routes/gigs/+page.svelte
+index c03be12..a6ac083 100644
+--- a/src/routes/gigs/+page.svelte
++++ b/src/routes/gigs/+page.svelte
+@@ -83,10 +83,10 @@
+ 		let profiles: { user_id: string; full_name: string | null }[] = [];
+ 
+ 		if (posterIds.length > 0) {
+-			const { data: profileData, error: profileError } = await supabase
+-				.from('profiles')
+-				.select('user_id, full_name')
+-				.in('user_id', posterIds);
++            const { data: profileData, error: profileError } = await supabase
++                .from('public_profile')
++                .select('user_id, full_name')
++                .in('user_id', posterIds);
+ 
+ 			if (profileError) {
+ 				console.error(profileError);
+diff --git a/src/routes/marketplace/+page.svelte b/src/routes/marketplace/+page.svelte
+index e4b2361..c117839 100644
+--- a/src/routes/marketplace/+page.svelte
++++ b/src/routes/marketplace/+page.svelte
+@@ -66,7 +66,7 @@
+ 
+ 		if (posterIds.length > 0) {
+ 			const { data: profiles } = await supabase
+-				.from('profiles')
++				.from('public_profile')
+ 				.select('user_id, full_name')
+ 				.in('user_id', posterIds);
+ 
+diff --git a/src/routes/profile/+page.svelte b/src/routes/profile/+page.svelte
+index b688ec0..9033ea2 100644
+--- a/src/routes/profile/+page.svelte
++++ b/src/routes/profile/+page.svelte
+@@ -14,6 +14,12 @@
+ 	let message = $state('');
+ 	let error = $state('');
+ 
++	type MyProfile = {
++		full_name: string | null;
++		phone: string | null;
++		location: string | null;
++	};
++
+ 	onMount(async () => {
+ 		try {
+ 			const {
+@@ -29,11 +35,9 @@
+ 			userId = user.id;
+ 			email = user.email ?? '';
+ 
+-			const { data: profile, error: profileError } = await supabase
+-				.from('profiles')
+-				.select('full_name, phone, location')
+-				.eq('user_id', user.id)
+-				.maybeSingle();
++			const { data: profileData, error: profileError } = await supabase.rpc(
++				'get_my_profile'
++			);
+ 
+ 			if (profileError) {
+ 				console.error('Profile load failed:', profileError);
+@@ -41,6 +45,8 @@
+ 				return;
+ 			}
+ 
++			const profile = (profileData as MyProfile[] | null)?.[0] ?? null;
++
+ 			if (profile) {
+ 				fullName = profile.full_name ?? '';
+ 				phone = profile.phone ?? '';
+@@ -97,19 +103,11 @@
+ 		saving = true;
+ 
+ 		try {
+-			const { error: saveError } = await supabase
+-				.from('profiles')
+-				.upsert(
+-					{
+-						user_id: userId,
+-						full_name: cleanedName,
+-						phone: cleanedPhone || null,
+-						location: cleanedLocation || null
+-					},
+-					{
+-						onConflict: 'user_id'
+-					}
+-				);
++			const { error: saveError } = await supabase.rpc('upsert_my_profile', {
++				p_full_name: cleanedName,
++				p_phone: cleanedPhone,
++				p_location: cleanedLocation
++			});
+ 
+ 			if (saveError) {
+ 				console.error('Profile save failed:', saveError);
+
+===== MIGRATION 002 =====
+-- 002_lock_down_rls.sql
+-- Hardens applications, payment_transactions, and profiles for client access:
+--   applications:
+--     - clients can only INSERT their own application, always status 'pending',
+--       only on open gigs, with a bounded message
+--     - posters can only UPDATE pending -> accepted/rejected; contact columns
+--       are immutable for clients
+--   payment_transactions:
+--     - client INSERTs must satisfy: payer owns the gig, amount equals the
+--       gig's agreed price (whole KES, 1..1_000_000), the payee has an
+--       accepted application, and status is forced to 'pending'
+--   profiles:
+--     - phone/location are no longer readable by other users; names are
+--       served through the public_profile view, own row through RPCs
+--   grants:
+--     - anon loses all direct table access
+
+begin;
+
+-- ============================================================
+-- Helper: role of the current PostgREST/Supabase request
+-- ============================================================
+create or replace function public.request_role()
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+    select coalesce(current_setting('request.jwt.claim.role', true), 'anon');
+$$;
+
+-- ============================================================
+-- applications integrity
+-- ============================================================
+create or replace function public.enforce_application_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    caller_role text := public.request_role();
+begin
+    if caller_role = 'service_role' then
+        return new;
+    end if;
+
+    if tg_op = 'INSERT' then
+        -- Workers never choose their own status: applications start pending.
+        new.worker_id := auth.uid();
+        new.status := 'pending';
+
+        if not exists (
+            select 1 from public.gigs g
+            where g.id = new.gig_id
+              and g.status = 'open'
+        ) then
+            raise exception 'Applications can only be submitted to open gigs.'
+            using errcode = '23514';
+        end if;
+
+        if new.message is not null and length(new.message) > 2000 then
+            raise exception 'Application message must be 2000 characters or fewer.'
+            using errcode = '22001';
+        end if;
+    end if;
+
+    if tg_op = 'UPDATE' then
+        -- Only a status transition is allowed, and only from pending.
+        if old.gig_id is distinct from new.gig_id
+            or old.worker_id is distinct from new.worker_id
+            or old.message is distinct from new.message
+            or old.created_at is distinct from new.created_at
+        then
+            raise exception 'Only the application status can be updated.'
+            using errcode = '23514';
+        end if;
+
+        if old.status is distinct from 'pending' then
+            raise exception 'Only pending applications can be updated.'
+            using errcode = '23514';
+        end if;
+
+        if new.status not in ('accepted', 'rejected') then
+            raise exception 'Applications can only be set to accepted or rejected.'
+            using errcode = '23514';
+        end if;
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists applications_enforce_rules on public.applications;
+
+create trigger applications_enforce_rules
+before insert or update on public.applications
+for each row
+execute function public.enforce_application_rules();
+
+-- ============================================================
+-- payment_transactions integrity
+-- ============================================================
+create or replace function public.enforce_payment_transaction_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    caller_role text := public.request_role();
+    gig public.gigs;
+begin
+    if caller_role = 'service_role' then
+        return new;
+    end if;
+
+    if tg_op = 'INSERT' or tg_op = 'UPDATE' then
+        new.status := 'pending';
+    end if;
+
+    if tg_op = 'INSERT' then
+        select * into gig
+        from public.gigs g
+        where g.id = new.gig_id;
+
+        if gig.id is null then
+            raise exception 'Payment does not reference an existing gig.'
+            using errcode = '23514';
+        end if;
+
+        if gig.poster_id is distinct from new.payer_id then
+            raise exception 'Payment records can only be created by the gig poster.'
+            using errcode = '23514';
+        end if;
+
+        if gig.agreed_price is null or gig.agreed_price is distinct from new.amount then
+            raise exception 'Payment amount must equal the agreed price on the gig.'
+            using errcode = '23514';
+        end if;
+
+        if new.amount is null
+            or new.amount <> floor(new.amount)
+            or new.amount < 1
+            or new.amount > 1000000
+        then
+            raise exception 'Payment amount must be a whole number between KES 1 and KES 1,000,000.'
+            using errcode = '23514';
+        end if;
+
+        if not exists (
+            select 1 from public.applications a
+            where a.gig_id = new.gig_id
+              and a.worker_id = new.worker_id
+              and a.status = 'accepted'
+        ) then
+            raise exception 'The selected worker does not have an accepted application for this gig.'
+            using errcode = '23514';
+        end if;
+
+        new.payer_id := gig.poster_id;
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists payment_transactions_enforce_rules on public.payment_transactions;
+
+create trigger payment_transactions_enforce_rules
+before insert or update on public.payment_transactions
+for each row
+execute function public.enforce_payment_transaction_rules();
+
+-- ============================================================
+-- profiles: hide phone/location from other users
+-- ============================================================
+create or replace view public.public_profile
+with (security_barrier = true)
+as
+    select p.user_id, p.full_name
+    from public.profiles p;
+
+revoke all on public.public_profile from anon;
+grant select on public.public_profile to authenticated;
+
+create or replace function public.get_my_profile()
+returns table (
+    full_name text,
+    phone text,
+    location text
+)
+language sql
+security definer
+set search_path = public
+as $$
+    select p.full_name, p.phone, p.location
+    from public.profiles p
+    where p.user_id = auth.uid();
+$$;
+
+create or replace function public.upsert_my_profile(
+    p_full_name text,
+    p_phone text,
+    p_location text
+)
+returns table (
+    full_name text,
+    phone text,
+    location text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    p_full_name := btrim(coalesce(p_full_name, ''));
+    p_phone := btrim(coalesce(p_phone, ''));
+    p_location := btrim(coalesce(p_location, ''));
+
+    if p_full_name = '' or length(p_full_name) > 100 then
+        raise exception 'Full name is required and must be 100 characters or fewer.'
+        using errcode = '23514';
+    end if;
+
+    if length(p_phone) > 20 then
+        raise exception 'Phone number must be 20 characters or fewer.'
+        using errcode = '22001';
+    end if;
+
+    if length(p_location) > 100 then
+        raise exception 'Location must be 100 characters or fewer.'
+        using errcode = '22001';
+    end if;
+
+    insert into public.profiles (user_id, full_name, phone, location)
+    values (
+        auth.uid(),
+        nullif(p_full_name, ''),
+        nullif(p_phone, ''),
+        nullif(p_location, '')
+    )
+    on conflict (user_id) do update
+    set full_name = excluded.full_name,
+        phone = excluded.phone,
+        location = excluded.location
+    where profiles.user_id = auth.uid();
+
+    return query
+    select p.full_name, p.phone, p.location
+    from public.profiles p
+    where p.user_id = auth.uid();
+end;
+$$;
+
+-- Clients no longer read/write the base table directly.
+drop policy if exists "Authenticated users can view profile names" on public.profiles;
+drop policy if exists "Users can view their own profile" on public.profiles;
+drop policy if exists "Enable insert for users based on user_id" on public.profiles;
+
+revoke all on public.profiles from anon;
+revoke all on public.profiles from authenticated;
+
+-- ============================================================
+-- Grant hygiene: every direct-table write is grant-scoped
+-- ============================================================
+revoke all on public.gigs from anon;
+revoke all on public.applications from anon;
+revoke all on public.payment_transactions from anon;
+revoke all on sequence public.gigs_id_seq
+    , public.applications_id_seq
+    , public.payment_transactions_id_seq
+    , public.profiles_id_seq
+from anon;
+
+grant select, insert, update on public.applications to authenticated;
+grant select, insert on public.payment_transactions to authenticated;
+
+commit;
+
+===== PAYMENT FUNCTION =====
+
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function kenyaPhoneNumber(input: string): string | null {
+  const digits = input.replace(/\D/g, "");
+
+  if (/^254[71]\d{8}$/.test(digits)) return digits;
+  if (/^0[71]\d{8}$/.test(digits)) {
+    return `254${digits.slice(1)}`;
+  }
+  if (/^[71]\d{8}$/.test(digits)) {
+    return `254${digits}`;
+  }
+
+  return null;
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse({ error: "POST requests only." }, 405);
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    const payheroAuthToken = Deno.env.get("PAYHERO_AUTH_TOKEN")?.trim();
+    const channelIdRaw = Deno.env.get("PAYHERO_CHANNEL_ID")?.trim();
+    const channelId = Number(channelIdRaw);
+
+    if (
+      !supabaseUrl ||
+      !anonKey ||
+      !serviceRoleKey ||
+      !payheroAuthToken ||
+      !channelIdRaw ||
+      !Number.isSafeInteger(channelId) ||
+      channelId <= 0
+    ) {
+      console.error("PayHero or Supabase configuration is incomplete.");
+
+      return jsonResponse({
+        error: "Server payment configuration is incomplete.",
+      }, 500);
+    }
+
+    const authorization = req.headers.get("Authorization");
+
+    if (!authorization?.startsWith("Bearer ")) {
+      return jsonResponse({ error: "Please sign in first." }, 401);
+    }
+
+    const accessToken = authorization.slice("Bearer ".length);
+
+    const userClient = createClient(supabaseUrl, anonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+    const { data: authData, error: authError } =
+      await userClient.auth.getUser(accessToken);
+
+    if (authError || !authData.user) {
+      return jsonResponse({
+        error: "Your session is invalid or expired. Please sign in again.",
+      }, 401);
+    }
+
+    const user = authData.user;
+
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+    let body: Record<string, unknown>;
+
+    try {
+      body = await req.json();
+    } catch {
+      return jsonResponse({ error: "Invalid JSON request body." }, 400);
+    }
+
+    const gigId = Number(body.gig_id);
+
+    const workerId = typeof body.worker_id === "string"
+      ? body.worker_id.trim()
+      : "";
+
+    const phone = typeof body.phone_number === "string"
+      ? kenyaPhoneNumber(body.phone_number)
+      : null;
+
+    if (!Number.isSafeInteger(gigId) || gigId <= 0 || !workerId || !phone) {
+      return jsonResponse({
+        error:
+          "Provide a valid gig ID, accepted worker, and Kenyan M-Pesa phone number.",
+      }, 400);
+    }
+
+    // Retrieve the gig and agreed price from the database.
+    const { data: gig, error: gigError } = await admin
+      .from("gigs")
+      .select("id, poster_id, status, agreed_price, payment_status")
+      .eq("id", gigId)
+      .eq("poster_id", user.id)
+      .maybeSingle();
+
+    if (gigError) {
+      console.error("Gig verification failed:", gigError.message);
+      return jsonResponse({ error: "Could not verify the gig." }, 500);
+    }
+
+    if (!gig) {
+      return jsonResponse({
+        error: "You are not authorized to pay for this gig.",
+      }, 403);
+    }
+
+    if (
+      !["closed", "completed"].includes(gig.status) ||
+      gig.payment_status !== "unpaid"
+    ) {
+      return jsonResponse({
+        error: "This gig is not currently eligible for payment.",
+      }, 409);
+    }
+
+    const amount = Number(gig.agreed_price);
+
+    if (!Number.isSafeInteger(amount) || amount < 1) {
+      return jsonResponse({
+        error: "The agreed price must be a whole number of KSh.",
+      }, 400);
+    }
+
+    // Verify the selected worker has an accepted application.
+    const { data: acceptedApplication, error: applicationError } =
+      await admin
+        .from("applications")
+        .select("worker_id")
+        .eq("gig_id", gigId)
+        .eq("worker_id", workerId)
+        .eq("status", "accepted")
+        .maybeSingle();
+
+    if (applicationError) {
+      console.error(
+        "Accepted application lookup failed:",
+        applicationError.message,
+      );
+
+      return jsonResponse({
+        error: "Could not verify the selected accepted worker.",
+      }, 500);
+    }
+
+    if (!acceptedApplication) {
+      return jsonResponse({
+        error:
+          "The selected worker does not have an accepted application for this gig.",
+      }, 409);
+    }
+
+    // Find the existing payment record.
+    const { data: transaction, error: transactionError } = await admin
+      .from("payment_transactions")
+      .select("id, worker_id, amount, status, checkout_request_id")
+      .eq("gig_id", gigId)
+      .eq("payer_id", user.id)
+      .eq("worker_id", acceptedApplication.worker_id)
+      .maybeSingle();
+
+    if (transactionError) {
+      console.error(
+        "Payment record lookup failed:",
+        transactionError.message,
+      );
+
+      return jsonResponse({
+        error: "Could not verify the payment record.",
+      }, 500);
+    }
+
+    if (
+      !transaction ||
+      transaction.worker_id !== workerId ||
+      Number(transaction.amount) !== amount
+    ) {
+      return jsonResponse({
+        error: "The payment record does not match the agreed price.",
+      }, 409);
+    }
+
+    if (
+      transaction.status !== "pending" ||
+      transaction.checkout_request_id
+    ) {
+      return jsonResponse({
+        error:
+          "A payment request already exists or is being processed. Check its status before retrying.",
+      }, 409);
+    }
+
+    // Reserve the transaction to prevent duplicate requests.
+    const { data: reserved, error: reserveError } = await admin
+      .from("payment_transactions")
+      .update({
+        status: "initiating",
+        phone_number: phone,
+        payment_method: "M-Pesa",
+        provider: "PayHero",
+      })
+      .eq("id", transaction.id)
+      .eq("status", "pending")
+      .is("checkout_request_id", null)
+      .select("id")
+      .maybeSingle();
+
+    if (reserveError || !reserved) {
+      console.error(
+        "Could not reserve payment transaction:",
+        reserveError?.message ?? "Transaction was not available",
+      );
+
+      return jsonResponse({
+        error:
+          "A payment request is already being processed. Check the payment record before retrying.",
+      }, 409);
+    }
+
+    // Do not blindly retry a request that may have reached PayHero.
+    let payheroRequestSent = false;
+    let definitiveRejection = false;
+
+    try {
+      const callbackUrl =
+        `${supabaseUrl}/functions/v1/mpesa-callback`;
+
+      // Use the transaction ID as our unique external reference.
+      const externalReference = String(transaction.id);
+
+      const authHeader = payheroAuthToken.startsWith("Basic ")
+        ? payheroAuthToken
+        : `Basic ${payheroAuthToken}`;
+
+      const payheroPayload = {
+        amount,
+        phone_number: phone,
+        channel_id: channelId,
+        provider: "m-pesa",
+        external_reference: externalReference,
+        callback_url: callbackUrl,
+      };
+
+      // Set this immediately before sending the request.
+      payheroRequestSent = true;
+
+      const payheroResponse = await fetch(
+        "https://backend.payhero.co.ke/api/v2/payments",
+        {
+          method: "POST",
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payheroPayload),
+        },
+      );
+
+      const responseText = await payheroResponse.text();
+
+      let payheroData: Record<string, unknown>;
+
+      try {
+        payheroData = JSON.parse(responseText);
+      } catch {
+        console.error("PayHero returned a non-JSON response:", {
+          httpStatus: payheroResponse.status,
+          response: responseText.slice(0, 500),
+        });
+
+        // The request may have reached PayHero. Do not reset the
+        // transaction automatically when its outcome is uncertain.
+        throw new Error(
+          `PayHero returned an unreadable response (HTTP ${payheroResponse.status}).`,
+        );
+      }
+
+      const checkoutRequestId =
+        typeof payheroData.CheckoutRequestID === "string"
+          ? payheroData.CheckoutRequestID
+          : "";
+
+      const payheroReference =
+        typeof payheroData.reference === "string"
+          ? payheroData.reference
+          : "";
+
+      const requestAccepted =
+        payheroResponse.ok &&
+        payheroData.success === true &&
+        checkoutRequestId.length > 0;
+
+      if (!requestAccepted) {
+        // Only treat a structured HTTP 4xx response as a definite
+        // rejection. A timeout, 5xx, or ambiguous response is uncertain.
+        if (
+          payheroResponse.status >= 400 &&
+          payheroResponse.status < 500
+        ) {
+          definitiveRejection = true;
+        }
+
+        console.error("PayHero payment request was not confirmed:", {
+          httpStatus: payheroResponse.status,
+          status: payheroData.status ?? null,
+          error: payheroData.error ?? payheroData.message ?? null,
+        });
+
+        throw new Error(
+          definitiveRejection
+            ? "PayHero rejected the payment request."
+            : "PayHero did not confirm whether the payment request was accepted.",
+        );
+      }
+
+      // Save PayHero's identifiers against the reserved transaction.
+      const { data: savedTransaction, error: saveError } = await admin
+        .from("payment_transactions")
+        .update({
+          status: "pending",
+          checkout_request_id: checkoutRequestId,
+          merchant_request_id: payheroReference || null,
+        })
+        .eq("id", transaction.id)
+        .eq("status", "initiating")
+        .is("checkout_request_id", null)
+        .select("id")
+        .maybeSingle();
+
+      if (saveError || !savedTransaction) {
+        console.error(
+          "Accepted PayHero request could not be saved:",
+          saveError?.message ?? "Transaction was not updated",
+        );
+
+        return jsonResponse({
+          error:
+            "PayHero may have accepted the request, but its tracking record needs attention. Do not retry this payment.",
+        }, 500);
+      }
+
+      return jsonResponse({
+        success: true,
+        status: "pending",
+        message:
+          "M-Pesa payment prompt requested. Check your phone and follow the official payment prompt. The gig will only be marked paid after payment confirmation.",
+      });
+    } catch (error) {
+      console.error(
+        "PayHero payment request failed or had an uncertain result:",
+        error instanceof Error ? error.message : "Unknown error",
+      );
+
+      // Restore the transaction only if no request was sent, or PayHero
+      // explicitly rejected it with a structured HTTP 4xx response.
+      // Keep uncertain requests reserved to prevent duplicate charges.
+      if (!payheroRequestSent || definitiveRejection) {
+        const { error: recoveryError } = await admin
+          .from("payment_transactions")
+          .update({ status: "pending" })
+          .eq("id", transaction.id)
+          .eq("status", "initiating")
+          .is("checkout_request_id", null);
+
+        if (recoveryError) {
+          console.error(
+            "Could not restore rejected/unsubmitted payment transaction:",
+            recoveryError.message,
+          );
+        }
+      }
+
+      return jsonResponse({
+        error:
+          "We could not confirm the payment request result. Check the payment record before trying again.",
+      }, 502);
+    }
+  } catch (error) {
+    console.error(
+      "PayHero STK Push function error:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+
+    return jsonResponse({ error: "Unexpected server error." }, 500);
+  }
+});
+
+===== CALLBACK FUNCTION =====
+
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function reply(message: string) {
+  return new Response(JSON.stringify({ success: true, message }), {
+    status: 200,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function normalizePhone(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  let phone = value.replace(/\D/g, "");
+
+  if (phone.startsWith("0") && phone.length === 10) {
+    phone = `254${phone.slice(1)}`;
+  } else if (
+    (phone.startsWith("7") || phone.startsWith("1")) &&
+    phone.length === 9
+  ) {
+    phone = `254${phone}`;
+  }
+
+  return /^254[17]\d{8}$/.test(phone) ? phone : null;
+}
+
+async function reconcileGigPayment(
+  admin: ReturnType<typeof createClient>,
+  gigId: number,
+  payerId: string,
+) {
+  // Confirm that the payer actually owns this gig.
+  const { data: gig, error: gigError } = await admin
+    .from("gigs")
+    .select("poster_id")
+    .eq("id", gigId)
+    .maybeSingle();
+
+  if (gigError || !gig || gig.poster_id !== payerId) {
+    console.error("Gig owner verification failed:", gigError);
+    return;
+  }
+
+  const { data: accepted, error: acceptedError } = await admin
+    .from("applications")
+    .select("worker_id")
+    .eq("gig_id", gigId)
+    .eq("status", "accepted");
+
+  if (acceptedError) {
+    console.error("Could not read accepted applications:", acceptedError);
+    return;
+  }
+
+  const workerIds = [
+    ...new Set((accepted ?? []).map((row) => String(row.worker_id))),
+  ];
+
+  let allPaid = false;
+
+  if (workerIds.length > 0) {
+    const { data: transactions, error } = await admin
+      .from("payment_transactions")
+      .select("worker_id, status")
+      .eq("gig_id", gigId)
+      .eq("payer_id", payerId)
+      .in("worker_id", workerIds);
+
+    if (error) {
+      console.error("Could not read payment transactions:", error);
+      return;
+    }
+
+    allPaid =
+      (transactions ?? []).length === workerIds.length &&
+      workerIds.every((workerId) =>
+        transactions?.some(
+          (transaction) =>
+            String(transaction.worker_id) === workerId &&
+            transaction.status === "paid",
+        ),
+      );
+  }
+
+  const { error: updateError } = await admin
+    .from("gigs")
+    .update({ payment_status: allPaid ? "paid" : "unpaid" })
+    .eq("id", gigId)
+    .eq("poster_id", payerId);
+
+  if (updateError) {
+    console.error("Could not update gig payment status:", updateError);
+  }
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return reply("Method not supported");
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const payheroAuth = Deno.env.get("PAYHERO_AUTH_TOKEN")?.trim();
+
+    if (!supabaseUrl || !serviceRoleKey || !payheroAuth) {
+      console.error("Required Supabase or PayHero secrets are missing.");
+      return reply("Server configuration error");
+    }
+
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    let payload: Record<string, any>;
+
+    try {
+      payload = await req.json();
+    } catch {
+      return reply("Invalid JSON");
+    }
+
+    const callback = payload?.response;
+
+    if (!callback || typeof callback !== "object") {
+      return reply("Missing callback response");
+    }
+
+    const externalReference = String(
+      callback.ExternalReference ?? "",
+    ).trim();
+
+    const checkoutRequestId = String(
+      callback.CheckoutRequestID ?? "",
+    ).trim();
+
+    if (!/^\d+$/.test(externalReference) || !checkoutRequestId) {
+      return reply("Missing or invalid transaction reference");
+    }
+
+    const { data: transaction, error: lookupError } = await admin
+      .from("payment_transactions")
+      .select(
+        "id, gig_id, payer_id, worker_id, amount, status, phone_number, checkout_request_id, merchant_request_id",
+      )
+      .eq("id", externalReference)
+      .maybeSingle();
+
+    if (lookupError || !transaction) {
+      console.error("Payment transaction lookup failed:", lookupError);
+      return reply("Transaction not found");
+    }
+
+    // Confirm the transaction belongs to the gig poster.
+    const { data: gig, error: gigLookupError } = await admin
+      .from("gigs")
+      .select("poster_id, agreed_price")
+      .eq("id", transaction.gig_id)
+      .maybeSingle();
+
+    if (
+      gigLookupError ||
+      !gig ||
+      gig.poster_id !== transaction.payer_id
+    ) {
+      console.error("Gig/payer relationship could not be verified.");
+      return reply("Gig owner verification failed");
+    }
+
+    if (transaction.status === "paid") {
+      await reconcileGigPayment(
+        admin,
+        transaction.gig_id,
+        transaction.payer_id,
+      );
+      return reply("Transaction already processed");
+    }
+
+    if (!["pending", "initiating"].includes(transaction.status)) {
+      return reply("Transaction is not awaiting payment");
+    }
+
+    if (
+      transaction.checkout_request_id &&
+      transaction.checkout_request_id !== checkoutRequestId
+    ) {
+      console.error("Checkout ID mismatch.");
+      return reply("Checkout ID mismatch");
+    }
+
+    const storedReference = String(
+      transaction.merchant_request_id ?? "",
+    ).trim();
+
+    if (!storedReference) {
+      console.error("PayHero reference has not been saved.");
+      return reply("PayHero reference is not available");
+    }
+
+    // Independently check the payment with PayHero.
+    const authHeader = payheroAuth.startsWith("Basic ")
+      ? payheroAuth
+      : `Basic ${payheroAuth}`;
+
+    const statusUrl = new URL(
+      "https://backend.payhero.co.ke/api/v2/transaction-status",
+    );
+    statusUrl.searchParams.set("reference", storedReference);
+
+    let statusResponse: Response;
+
+    try {
+      statusResponse = await fetch(statusUrl, {
+        method: "GET",
+        headers: {
+          Authorization: authHeader,
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch (error) {
+      console.error("PayHero status request failed:", error);
+      return reply("Could not verify payment with PayHero");
+    }
+
+    if (!statusResponse.ok) {
+      console.error("PayHero status HTTP error:", statusResponse.status);
+      return reply("PayHero verification failed");
+    }
+
+    let verified: Record<string, any>;
+
+    try {
+      verified = await statusResponse.json();
+    } catch {
+      return reply("PayHero returned invalid JSON");
+    }
+
+    const verifiedReference = String(verified.reference ?? "").trim();
+
+    if (
+      verified.success !== true ||
+      String(verified.status ?? "").toUpperCase() !== "SUCCESS"
+    ) {
+      return reply("PayHero has not confirmed successful payment");
+    }
+
+    if (verifiedReference !== storedReference) {
+      console.error("PayHero reference mismatch.");
+      return reply("PayHero reference mismatch");
+    }
+
+    // The STK function sends the transaction ID as external_reference.
+    // Verify this association only if PayHero returns that field.
+    if (verified.external_reference !== undefined) {
+      if (String(verified.external_reference) !== externalReference) {
+        console.error("PayHero external reference mismatch.");
+        return reply("External reference mismatch");
+      }
+    }
+
+    // Check callback details against the stored payment request.
+    const callbackAmount = Number(callback.Amount);
+    const expectedAmount = Number(transaction.amount);
+
+    if (
+      !Number.isFinite(callbackAmount) ||
+      callbackAmount !== expectedAmount
+    ) {
+      console.error("Callback amount mismatch.");
+      return reply("Payment amount mismatch");
+    }
+
+    if (
+      gig.agreed_price !== null &&
+      Number(gig.agreed_price) !== expectedAmount
+    ) {
+      console.error("Transaction amount differs from agreed gig price.");
+      return reply("Agreed amount mismatch");
+    }
+
+    const callbackPhone = normalizePhone(String(callback.Phone ?? ""));
+    const expectedPhone = normalizePhone(
+      String(transaction.phone_number ?? ""),
+    );
+
+    if (
+      !callbackPhone ||
+      !expectedPhone ||
+      callbackPhone !== expectedPhone
+    ) {
+      console.error("Callback phone mismatch.");
+      return reply("Payment phone mismatch");
+    }
+
+    if (
+      Number(callback.ResultCode) !== 0 ||
+      String(callback.Status ?? "").toLowerCase() !== "success"
+    ) {
+      return reply("Callback does not report successful payment");
+    }
+
+    const receipt = String(
+      callback.MpesaReceiptNumber ?? verified.provider_reference ?? "",
+    ).trim();
+
+    if (!receipt) {
+      return reply("M-Pesa receipt is missing");
+    }
+
+    // Cross-check amount or phone if the status endpoint provides them.
+    if (verified.amount !== undefined) {
+      if (Number(verified.amount) !== expectedAmount) {
+        console.error("PayHero amount mismatch.");
+        return reply("PayHero amount mismatch");
+      }
+    }
+
+    const verifiedPhoneValue =
+      verified.phone_number ?? verified.Phone ?? verified.phone;
+
+    if (verifiedPhoneValue !== undefined) {
+      const verifiedPhone = normalizePhone(String(verifiedPhoneValue));
+
+      if (!verifiedPhone || verifiedPhone !== expectedPhone) {
+        console.error("PayHero phone mismatch.");
+        return reply("PayHero phone mismatch");
+      }
+    }
+
+    const now = new Date().toISOString();
+
+    // Mark paid only after PayHero status and transaction checks pass.
+    const { data: updated, error: updateError } = await admin
+      .from("payment_transactions")
+      .update({
+        status: "paid",
+        result_code: 0,
+        result_desc: String(
+          callback.ResultDesc ?? "Payment confirmed by PayHero",
+        ),
+        mpesa_receipt_number: receipt,
+        provider_transaction_id: String(
+          verified.provider_reference ?? receipt,
+        ),
+        callback_received_at: now,
+        paid_at: now,
+        provider: "PayHero",
+        payment_method: "M-Pesa",
+      })
+      .eq("id", transaction.id)
+      .eq("payer_id", transaction.payer_id)
+      .in("status", ["pending", "initiating"])
+      .select("id")
+      .maybeSingle();
+
+    if (updateError) {
+      console.error("Could not save verified payment:", updateError);
+      return reply("Verified payment could not be saved");
+    }
+
+    if (!updated) {
+      const { data: latest, error: latestError } = await admin
+        .from("payment_transactions")
+        .select("status")
+        .eq("id", transaction.id)
+        .maybeSingle();
+
+      if (latestError || latest?.status !== "paid") {
+        return reply("Transaction changed; reconciliation is required");
+      }
+    }
+
+    await reconcileGigPayment(
+      admin,
+      transaction.gig_id,
+      transaction.payer_id,
+    );
+
+    return reply("Payment verified and recorded");
+  } catch (error) {
+    console.error("Unexpected PayHero callback error:", error);
+    return reply("Unexpected callback error");
+  }
+});

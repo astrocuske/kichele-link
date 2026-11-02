@@ -22,10 +22,10 @@ export default defineConfig({
 		})
 	],
 	resolve: {
-    alias: {
-        $lib: resolve('./src/lib')
-    }
-},
+		alias: {
+			$lib: resolve('./src/lib')
+		}
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

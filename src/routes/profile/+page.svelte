@@ -14,6 +14,12 @@
 	let message = $state('');
 	let error = $state('');
 
+	type MyProfile = {
+		full_name: string | null;
+		phone: string | null;
+		location: string | null;
+	};
+
 	onMount(async () => {
 		try {
 			const {
@@ -29,17 +35,15 @@
 			userId = user.id;
 			email = user.email ?? '';
 
-			const { data: profile, error: profileError } = await supabase
-				.from('profiles')
-				.select('full_name, phone, location')
-				.eq('user_id', user.id)
-				.maybeSingle();
+			const { data: profileData, error: profileError } = await supabase.rpc('get_my_profile');
 
 			if (profileError) {
 				console.error('Profile load failed:', profileError);
 				error = `${profileError.message} (Code: ${profileError.code ?? 'unknown'})`;
 				return;
 			}
+
+			const profile = (profileData as MyProfile[] | null)?.[0] ?? null;
 
 			if (profile) {
 				fullName = profile.full_name ?? '';
@@ -97,19 +101,11 @@
 		saving = true;
 
 		try {
-			const { error: saveError } = await supabase
-				.from('profiles')
-				.upsert(
-					{
-						user_id: userId,
-						full_name: cleanedName,
-						phone: cleanedPhone || null,
-						location: cleanedLocation || null
-					},
-					{
-						onConflict: 'user_id'
-					}
-				);
+			const { error: saveError } = await supabase.rpc('upsert_my_profile', {
+				p_full_name: cleanedName,
+				p_phone: cleanedPhone,
+				p_location: cleanedLocation
+			});
 
 			if (saveError) {
 				console.error('Profile save failed:', saveError);
@@ -135,10 +131,7 @@
 
 <svelte:head>
 	<title>My Profile | Kichele Link</title>
-	<meta
-		name="description"
-		content="Manage your Kichele Link profile information."
-	/>
+	<meta name="description" content="Manage your Kichele Link profile information." />
 </svelte:head>
 
 <div class="min-h-screen bg-slate-50 text-slate-900">
@@ -182,41 +175,30 @@
 			</div>
 		{:else}
 			<div class="mb-8">
-				<p class="text-sm font-bold uppercase tracking-widest text-green-600">
-					My Profile
-				</p>
+				<p class="text-sm font-bold tracking-widest text-green-600 uppercase">My Profile</p>
 
-				<h1 class="mt-2 text-4xl font-black tracking-tight text-slate-900">
-					Your profile
-				</h1>
+				<h1 class="mt-2 text-4xl font-black tracking-tight text-slate-900">Your profile</h1>
 
 				<p class="mt-3 text-slate-600">
-					Keep your contact information up to date so people can recognize and
-					reach you when needed.
+					Keep your contact information up to date so people can recognize and reach you when
+					needed.
 				</p>
 			</div>
 
 			<div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
 				<div class="mb-8 rounded-2xl bg-slate-50 p-5">
-					<p class="text-xs font-bold uppercase tracking-wider text-slate-500">
-						Account email
-					</p>
+					<p class="text-xs font-bold tracking-wider text-slate-500 uppercase">Account email</p>
 
-					<p class="mt-2 break-all font-semibold text-slate-900">
+					<p class="mt-2 font-semibold break-all text-slate-900">
 						{email || 'No email available'}
 					</p>
 
-					<p class="mt-1 text-sm text-slate-500">
-						Your login email cannot be changed here.
-					</p>
+					<p class="mt-1 text-sm text-slate-500">Your login email cannot be changed here.</p>
 				</div>
 
 				<form onsubmit={saveProfile} class="space-y-6">
 					<div>
-						<label
-							for="fullName"
-							class="mb-2 block text-sm font-bold text-slate-700"
-						>
+						<label for="fullName" class="mb-2 block text-sm font-bold text-slate-700">
 							Full name <span class="text-red-600">*</span>
 						</label>
 
@@ -230,15 +212,12 @@
 							placeholder="Enter your full name"
 							required
 							disabled={saving}
-							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
 						/>
 					</div>
 
 					<div>
-						<label
-							for="phone"
-							class="mb-2 block text-sm font-bold text-slate-700"
-						>
+						<label for="phone" class="mb-2 block text-sm font-bold text-slate-700">
 							Phone number
 						</label>
 
@@ -251,7 +230,7 @@
 							autocomplete="tel"
 							placeholder="e.g. 0712345678"
 							disabled={saving}
-							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
 						/>
 
 						<p class="mt-2 text-xs text-slate-500">
@@ -260,10 +239,7 @@
 					</div>
 
 					<div>
-						<label
-							for="location"
-							class="mb-2 block text-sm font-bold text-slate-700"
-						>
+						<label for="location" class="mb-2 block text-sm font-bold text-slate-700">
 							Location
 						</label>
 
@@ -276,7 +252,7 @@
 							autocomplete="address-level2"
 							placeholder="e.g. Gilgil, Nakuru"
 							disabled={saving}
-							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
 						/>
 					</div>
 

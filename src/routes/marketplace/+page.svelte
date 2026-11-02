@@ -14,8 +14,6 @@
 		budget: number;
 		status: string;
 		category: string;
-		agreed_price: number | null;
-		payment_status: string;
 		poster_name?: string;
 	};
 
@@ -46,9 +44,7 @@
 
 		const { data, error } = await supabase
 			.from('gigs')
-			.select(
-				'id, created_at, poster_id, title, description, location, budget, status, category, agreed_price, payment_status'
-			)
+			.select('id, created_at, poster_id, title, description, location, budget, status, category')
 			.eq('status', 'open')
 			.order('created_at', { ascending: false });
 
@@ -66,7 +62,7 @@
 
 		if (posterIds.length > 0) {
 			const { data: profiles } = await supabase
-				.from('profiles')
+				.from('public_profile')
 				.select('user_id, full_name')
 				.in('user_id', posterIds);
 
@@ -89,8 +85,7 @@
 		const search = searchTerm.trim().toLowerCase();
 
 		return gigs.filter((gig) => {
-			const matchesCategory =
-				selectedCategory === 'All' || gig.category === selectedCategory;
+			const matchesCategory = selectedCategory === 'All' || gig.category === selectedCategory;
 
 			const matchesSearch =
 				search === '' ||
@@ -115,18 +110,13 @@
 
 <svelte:head>
 	<title>Find Gigs | Kichele Link</title>
-	<meta
-		name="description"
-		content="Find available gigs and quick jobs on Kichele Link."
-	/>
+	<meta name="description" content="Find available gigs and quick jobs on Kichele Link." />
 </svelte:head>
 
 <div class="min-h-screen bg-slate-50">
 	<header class="border-b border-slate-200 bg-white">
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-			<a href="/" class="text-2xl font-bold text-slate-900">
-				Kichele Link
-			</a>
+			<a href="/" class="text-2xl font-bold text-slate-900"> Kichele Link </a>
 
 			<div class="flex items-center gap-4">
 				<a
@@ -155,13 +145,9 @@
 
 	<main class="mx-auto max-w-6xl px-6 py-10">
 		<div class="mb-8">
-			<p class="mb-2 text-sm font-bold uppercase tracking-widest text-blue-600">
-				WORKER SPACE
-			</p>
+			<p class="mb-2 text-sm font-bold tracking-widest text-blue-600 uppercase">WORKER SPACE</p>
 
-			<h1 class="text-4xl font-bold text-slate-900">
-				Find Gigs
-			</h1>
+			<h1 class="text-4xl font-bold text-slate-900">Find Gigs</h1>
 
 			<p class="mt-2 text-slate-600">
 				Find available work and apply for gigs that match your skills.
@@ -181,7 +167,7 @@
 					bind:value={selectedCategory}
 					class="rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-blue-500"
 				>
-					{#each categories as category}
+					{#each categories as category (category)}
 						<option value={category}>{category}</option>
 					{/each}
 				</select>
@@ -208,30 +194,22 @@
 			<div class="rounded-2xl border border-slate-200 bg-white p-10 text-center">
 				<div class="mb-3 text-4xl">🛠️</div>
 
-				<h2 class="text-xl font-bold text-slate-900">
-					No gigs found
-				</h2>
+				<h2 class="text-xl font-bold text-slate-900">No gigs found</h2>
 
-				<p class="mt-2 text-slate-600">
-					Try another search or category.
-				</p>
+				<p class="mt-2 text-slate-600">Try another search or category.</p>
 			</div>
 		{:else}
 			<div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-				{#each filteredGigs() as gig}
+				{#each filteredGigs() as gig (gig.id)}
 					<article
 						class="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
 					>
 						<div class="mb-4 flex items-start justify-between gap-3">
-							<span
-								class="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700"
-							>
+							<span class="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
 								{gig.category}
 							</span>
 
-							<span class="text-sm font-bold text-blue-600">
-								Open
-							</span>
+							<span class="text-sm font-bold text-blue-600"> Open </span>
 						</div>
 
 						<h2 class="text-xl font-bold text-slate-900">

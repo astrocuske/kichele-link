@@ -37,8 +37,7 @@
 
 	let filteredGigs = $derived(
 		gigs.filter((gig) => {
-			const matchesCategory =
-				selectedCategory === 'All' || gig.category === selectedCategory;
+			const matchesCategory = selectedCategory === 'All' || gig.category === selectedCategory;
 
 			const search = searchTerm.trim().toLowerCase();
 
@@ -63,9 +62,7 @@
 
 		const { data, error } = await supabase
 			.from('gigs')
-			.select(
-				'id, title, category, description, location, budget, status, created_at, poster_id'
-			)
+			.select('id, title, category, description, location, budget, status, created_at, poster_id')
 			.eq('status', 'open')
 			.order('created_at', { ascending: false });
 
@@ -84,7 +81,7 @@
 
 		if (posterIds.length > 0) {
 			const { data: profileData, error: profileError } = await supabase
-				.from('profiles')
+				.from('public_profile')
 				.select('user_id, full_name')
 				.in('user_id', posterIds);
 
@@ -95,9 +92,7 @@
 			}
 		}
 
-		const profileMap = new Map(
-			profiles.map((profile) => [profile.user_id, profile.full_name])
-		);
+		const profileMap = new Map(profiles.map((profile) => [profile.user_id, profile.full_name]));
 
 		gigs = gigsData.map((gig) => ({
 			...gig,
@@ -110,17 +105,12 @@
 
 <svelte:head>
 	<title>Browse Gigs | Kichele Link</title>
-	<meta
-		name="description"
-		content="Find available local gigs and short jobs on Kichele Link."
-	/>
+	<meta name="description" content="Find available local gigs and short jobs on Kichele Link." />
 </svelte:head>
 
 <div class="min-h-screen bg-slate-50 text-slate-900">
 	<header class="border-b border-slate-200 bg-white">
-		<div
-			class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8"
-		>
+		<div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8">
 			<a href="/" class="flex items-center gap-3">
 				<div
 					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white shadow-sm"
@@ -129,13 +119,9 @@
 				</div>
 
 				<div>
-					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">
-						Kichele Link
-					</h1>
+					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">Kichele Link</h1>
 
-					<p class="text-xs font-medium text-slate-500">
-						Pata Kazi, Pata Kichele.
-					</p>
+					<p class="text-xs font-medium text-slate-500">Pata Kazi, Pata Kichele.</p>
 				</div>
 			</a>
 
@@ -158,24 +144,17 @@
 	</header>
 
 	<main class="mx-auto max-w-7xl px-5 py-10 sm:px-6 lg:px-8">
-		<section
-			class="mb-8 rounded-3xl border border-green-100 bg-green-50 px-6 py-8 sm:px-8"
-		>
+		<section class="mb-8 rounded-3xl border border-green-100 bg-green-50 px-6 py-8 sm:px-8">
 			<div class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<p class="text-sm font-bold uppercase tracking-wider text-green-700">
-						Marketplace
-					</p>
+					<p class="text-sm font-bold tracking-wider text-green-700 uppercase">Marketplace</p>
 
-					<h2
-						class="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl"
-					>
+					<h2 class="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
 						Find your next gig
 					</h2>
 
 					<p class="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-						Find short jobs that need to be done and connect with people
-						looking for help.
+						Find short jobs that need to be done and connect with people looking for help.
 					</p>
 				</div>
 
@@ -189,15 +168,10 @@
 		</section>
 
 		{#if !loading && !errorMessage && gigs.length > 0}
-			<section
-				class="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-			>
+			<section class="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 				<div class="grid gap-5 md:grid-cols-2">
 					<div>
-						<label
-							for="search"
-							class="mb-2 block text-sm font-bold text-slate-700"
-						>
+						<label for="search" class="mb-2 block text-sm font-bold text-slate-700">
 							Search gigs
 						</label>
 
@@ -211,10 +185,7 @@
 					</div>
 
 					<div>
-						<label
-							for="category"
-							class="mb-2 block text-sm font-bold text-slate-700"
-						>
+						<label for="category" class="mb-2 block text-sm font-bold text-slate-700">
 							Browse by category
 						</label>
 
@@ -223,7 +194,7 @@
 							bind:value={selectedCategory}
 							class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						>
-							{#each categories as category}
+							{#each categories as category (category)}
 								<option value={category}>{category}</option>
 							{/each}
 						</select>
@@ -231,9 +202,7 @@
 				</div>
 
 				<div class="mt-4 flex items-center justify-between gap-4">
-					<p class="text-sm text-slate-500">
-						Search and category filters work together.
-					</p>
+					<p class="text-sm text-slate-500">Search and category filters work together.</p>
 
 					{#if searchTerm || selectedCategory !== 'All'}
 						<button
@@ -253,10 +222,8 @@
 
 		{#if loading}
 			<div class="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-				{#each Array(6) as _}
-					<div
-						class="animate-pulse rounded-2xl border border-slate-200 bg-white p-6"
-					>
+				{#each [0, 1, 2, 3, 4, 5] as placeholder (placeholder)}
+					<div class="animate-pulse rounded-2xl border border-slate-200 bg-white p-6">
 						<div class="h-5 w-24 rounded bg-slate-200"></div>
 						<div class="mt-5 h-6 w-3/4 rounded bg-slate-200"></div>
 						<div class="mt-3 h-4 w-full rounded bg-slate-100"></div>
@@ -276,9 +243,7 @@
 					</div>
 
 					<div>
-						<h3 class="font-bold text-red-900">
-							Could not load gigs
-						</h3>
+						<h3 class="font-bold text-red-900">Could not load gigs</h3>
 
 						<p class="mt-1 text-sm leading-6 text-red-700">
 							{errorMessage}
@@ -296,9 +261,7 @@
 					+
 				</div>
 
-				<h3 class="mt-5 text-xl font-black text-slate-900">
-					No matching gigs
-				</h3>
+				<h3 class="mt-5 text-xl font-black text-slate-900">No matching gigs</h3>
 
 				<p class="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
 					No gigs match your current search or category filter.
@@ -318,9 +281,7 @@
 		{:else}
 			<div class="mb-5 flex items-center justify-between">
 				<div>
-					<h3 class="text-lg font-black text-slate-900">
-						Available opportunities
-					</h3>
+					<h3 class="text-lg font-black text-slate-900">Available opportunities</h3>
 
 					<p class="mt-1 text-sm text-slate-500">
 						{filteredGigs.length}
@@ -336,23 +297,19 @@
 					</p>
 				</div>
 
-				<span
-					class="rounded-full bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700"
-				>
+				<span class="rounded-full bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700">
 					Open
 				</span>
 			</div>
 
 			<div class="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-				{#each filteredGigs as gig}
+				{#each filteredGigs as gig (gig.id)}
 					<article
 						class="group flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-green-200 hover:shadow-md"
 					>
 						<div class="flex items-start justify-between gap-3">
 							<div class="flex flex-wrap gap-2">
-								<span
-									class="rounded-full bg-green-50 px-3 py-1 text-xs font-bold text-green-700"
-								>
+								<span class="rounded-full bg-green-50 px-3 py-1 text-xs font-bold text-green-700">
 									Open
 								</span>
 
@@ -367,9 +324,7 @@
 
 							{#if gig.budget !== null}
 								<div class="text-right">
-									<p class="text-xs font-medium text-slate-400">
-										Budget
-									</p>
+									<p class="text-xs font-medium text-slate-400">Budget</p>
 
 									<p class="font-black text-green-700">
 										KSh {gig.budget.toLocaleString()}
@@ -378,9 +333,7 @@
 							{/if}
 						</div>
 
-						<h3
-							class="mt-5 text-xl font-extrabold leading-7 text-slate-950"
-						>
+						<h3 class="mt-5 text-xl leading-7 font-extrabold text-slate-950">
 							{gig.title}
 						</h3>
 
@@ -425,9 +378,7 @@
 	</main>
 
 	<footer class="mt-10 border-t border-slate-200 bg-white">
-		<div
-			class="mx-auto max-w-7xl px-5 py-6 text-center text-sm text-slate-500 sm:px-6 lg:px-8"
-		>
+		<div class="mx-auto max-w-7xl px-5 py-6 text-center text-sm text-slate-500 sm:px-6 lg:px-8">
 			© 2026 Kichele Link · Pata Kazi, Pata Kichele.
 		</div>
 	</footer>

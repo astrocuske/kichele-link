@@ -54,9 +54,7 @@
 					<div class="text-2xl font-extrabold tracking-tight text-blue-600">
 						Kichele<span class="text-slate-900"> Link</span>
 					</div>
-					<div class="text-xs font-medium text-slate-500">
-						Pata Kazi, Pata Kichele.
-					</div>
+					<div class="text-xs font-medium text-slate-500">Pata Kazi, Pata Kichele.</div>
 				</a>
 
 				<div class="flex items-center gap-3">
@@ -91,17 +89,15 @@
 				class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-blue-600 to-blue-500 px-6 py-8 text-white shadow-lg sm:px-10 sm:py-10"
 			>
 				<div class="relative z-10 max-w-3xl">
-					<p class="text-sm font-bold uppercase tracking-[0.2em] text-blue-100">
-						WORKER SPACE
-					</p>
+					<p class="text-sm font-bold tracking-[0.2em] text-blue-100 uppercase">WORKER SPACE</p>
 
 					<h1 class="mt-3 text-3xl font-extrabold tracking-tight sm:text-4xl">
 						Find work. Get the job done.
 					</h1>
 
 					<p class="mt-4 max-w-2xl text-base leading-7 text-blue-50 sm:text-lg">
-						Find available gigs, apply for opportunities and keep track of the jobs you
-						get through Kichele Link.
+						Find available gigs, apply for opportunities and keep track of the jobs you get through
+						Kichele Link.
 					</p>
 
 					<div class="mt-7 flex flex-wrap gap-3">
@@ -121,16 +117,14 @@
 					</div>
 				</div>
 
-				<div
-					class="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-white/10"
-				></div>
-				<div
-					class="absolute -bottom-32 right-20 h-72 w-72 rounded-full bg-blue-400/20"
-				></div>
+				<div class="absolute -top-20 -right-20 h-64 w-64 rounded-full bg-white/10"></div>
+				<div class="absolute right-20 -bottom-32 h-72 w-72 rounded-full bg-blue-400/20"></div>
 			</section>
 
 			{#if errorMessage}
-				<div class="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+				<div
+					class="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700"
+				>
 					{errorMessage}
 				</div>
 			{/if}
@@ -138,13 +132,9 @@
 			<!-- Main actions -->
 			<section class="mt-10">
 				<div class="mb-5">
-					<p class="text-sm font-bold uppercase tracking-wide text-blue-600">
-						YOUR WORK
-					</p>
+					<p class="text-sm font-bold tracking-wide text-blue-600 uppercase">YOUR WORK</p>
 
-					<h2 class="mt-1 text-2xl font-extrabold text-slate-900">
-						What would you like to do?
-					</h2>
+					<h2 class="mt-1 text-2xl font-extrabold text-slate-900">What would you like to do?</h2>
 				</div>
 
 				<div class="grid gap-5 md:grid-cols-3">
@@ -164,9 +154,7 @@
 							Browse available jobs and find opportunities that match your skills.
 						</p>
 
-						<div class="mt-5 font-bold text-blue-600">
-							Browse gigs →
-						</div>
+						<div class="mt-5 font-bold text-blue-600">Browse gigs →</div>
 					</a>
 
 					<a
@@ -182,13 +170,11 @@
 						<h3 class="text-xl font-bold text-slate-900">My Applications</h3>
 
 						<p class="mt-2 text-sm leading-6 text-slate-600">
-							Track the gigs you have applied for and see whether applications are
-							pending, accepted or rejected.
+							Track the gigs you have applied for and see whether applications are pending, accepted
+							or rejected.
 						</p>
 
-						<div class="mt-5 font-bold text-blue-600">
-							View applications →
-						</div>
+						<div class="mt-5 font-bold text-blue-600">View applications →</div>
 					</a>
 
 					<a
@@ -204,13 +190,10 @@
 						<h3 class="text-xl font-bold text-slate-900">My Jobs</h3>
 
 						<p class="mt-2 text-sm leading-6 text-slate-600">
-							See the jobs you have been accepted for and keep track of their progress
-							and payment.
+							See the jobs you have been accepted for and keep track of their progress and payment.
 						</p>
 
-						<div class="mt-5 font-bold text-blue-600">
-							View my jobs →
-						</div>
+						<div class="mt-5 font-bold text-blue-600">View my jobs →</div>
 					</a>
 				</div>
 			</section>
@@ -218,17 +201,15 @@
 			<!-- How it works -->
 			<section class="mt-12 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
 				<div class="text-center">
-					<p class="text-sm font-bold uppercase tracking-wide text-blue-600">
-						HOW IT WORKS
-					</p>
+					<p class="text-sm font-bold tracking-wide text-blue-600 uppercase">HOW IT WORKS</p>
 
 					<h2 class="mt-2 text-2xl font-extrabold text-slate-900">
 						From finding a gig to getting paid
 					</h2>
 
 					<p class="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-						Kichele Link keeps the process simple from the moment you find a job to the
-						moment you complete it.
+						Kichele Link keeps the process simple from the moment you find a job to the moment you
+						complete it.
 					</p>
 				</div>
 
@@ -279,9 +260,7 @@
 
 			<!-- Bottom CTA -->
 			<section class="mt-10 rounded-2xl bg-slate-900 px-6 py-8 text-center sm:px-10">
-				<h2 class="text-2xl font-extrabold text-white">
-					Ready to find your next gig?
-				</h2>
+				<h2 class="text-2xl font-extrabold text-white">Ready to find your next gig?</h2>
 
 				<p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-300">
 					Explore available opportunities and find work that matches what you can do.
@@ -302,9 +281,7 @@
 			>
 				<p>© 2026 Kichele Link. Pata Kazi, Pata Kichele.</p>
 
-				<a href="/" class="font-medium text-blue-600 hover:text-blue-700">
-					Back to home
-				</a>
+				<a href="/" class="font-medium text-blue-600 hover:text-blue-700"> Back to home </a>
 			</div>
 		</footer>
 	</div>

@@ -31,8 +31,7 @@
 		}
 
 		if (data.user) {
-			message =
-				'Account created successfully! Check your email if confirmation is required.';
+			message = 'Account created successfully! Check your email if confirmation is required.';
 			name = '';
 			email = '';
 			password = '';
@@ -50,9 +49,7 @@
 
 <div class="min-h-screen bg-slate-50">
 	<header class="border-b border-slate-200 bg-white">
-		<div
-			class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8"
-		>
+		<div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8">
 			<a href="/" class="flex items-center gap-3">
 				<div
 					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white shadow-sm"
@@ -61,12 +58,8 @@
 				</div>
 
 				<div>
-					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">
-						Kichele Link
-					</h1>
-					<p class="text-xs font-medium text-slate-500">
-						Pata Kazi, Pata Kichele.
-					</p>
+					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">Kichele Link</h1>
+					<p class="text-xs font-medium text-slate-500">Pata Kazi, Pata Kichele.</p>
 				</div>
 			</a>
 
@@ -106,12 +99,7 @@
 					}}
 				>
 					<div>
-						<label
-							for="name"
-							class="block text-sm font-bold text-slate-700"
-						>
-							Full Name
-						</label>
+						<label for="name" class="block text-sm font-bold text-slate-700"> Full Name </label>
 
 						<input
 							id="name"
@@ -120,17 +108,12 @@
 							placeholder="Your full name"
 							required
 							autocomplete="name"
-							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						/>
 					</div>
 
 					<div>
-						<label
-							for="email"
-							class="block text-sm font-bold text-slate-700"
-						>
-							Email
-						</label>
+						<label for="email" class="block text-sm font-bold text-slate-700"> Email </label>
 
 						<input
 							id="email"
@@ -139,17 +122,12 @@
 							placeholder="you@example.com"
 							required
 							autocomplete="email"
-							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						/>
 					</div>
 
 					<div>
-						<label
-							for="password"
-							class="block text-sm font-bold text-slate-700"
-						>
-							Password
-						</label>
+						<label for="password" class="block text-sm font-bold text-slate-700"> Password </label>
 
 						<input
 							id="password"
@@ -159,12 +137,10 @@
 							minlength="6"
 							required
 							autocomplete="new-password"
-							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						/>
 
-						<p class="mt-2 text-xs text-slate-400">
-							Use at least 6 characters.
-						</p>
+						<p class="mt-2 text-xs text-slate-400">Use at least 6 characters.</p>
 					</div>
 
 					{#if error}
@@ -216,10 +192,7 @@
 
 				<p class="text-center text-sm text-slate-600">
 					Already have an account?
-					<a
-						href="/login"
-						class="font-bold text-green-700 hover:text-green-800 hover:underline"
-					>
+					<a href="/login" class="font-bold text-green-700 hover:text-green-800 hover:underline">
 						Log in
 					</a>
 				</p>
@@ -232,9 +205,7 @@
 				</a>
 			</div>
 
-			<p class="mt-6 text-center text-xs text-slate-400">
-				© 2026 Kichele Link
-			</p>
+			<p class="mt-6 text-center text-xs text-slate-400">© 2026 Kichele Link</p>
 		</div>
 	</main>
 </div>

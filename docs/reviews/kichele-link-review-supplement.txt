@@ -1,0 +1,2176 @@
+===== supabase/migrations/002_lock_down_rls.sql =====
+-- 002_lock_down_rls.sql
+-- Hardens applications, payment_transactions, and profiles for client access:
+--   applications:
+--     - clients can only INSERT their own application, always status 'pending',
+--       only on open gigs, with a bounded message
+--     - posters can only UPDATE pending -> accepted/rejected; contact columns
+--       are immutable for clients
+--   payment_transactions:
+--     - client INSERTs must satisfy: payer owns the gig, amount equals the
+--       gig's agreed price (whole KES, 1..1_000_000), the payee has an
+--       accepted application, and status is forced to 'pending'
+--   profiles:
+--     - phone/location are no longer readable by other users; names are
+--       served through the public_profile view, own row through RPCs
+--   grants:
+--     - anon loses all direct table access
+
+begin;
+
+-- ============================================================
+-- Helper: role of the current PostgREST/Supabase request
+-- ============================================================
+create or replace function public.request_role()
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+    select coalesce(current_setting('request.jwt.claim.role', true), 'anon');
+$$;
+
+-- ============================================================
+-- applications integrity
+-- ============================================================
+create or replace function public.enforce_application_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    caller_role text := public.request_role();
+begin
+    if caller_role = 'service_role' then
+        return new;
+    end if;
+
+    if tg_op = 'INSERT' then
+        -- Workers never choose their own status: applications start pending.
+        new.worker_id := auth.uid();
+        new.status := 'pending';
+
+        if not exists (
+            select 1 from public.gigs g
+            where g.id = new.gig_id
+              and g.status = 'open'
+        ) then
+            raise exception 'Applications can only be submitted to open gigs.'
+            using errcode = '23514';
+        end if;
+
+        if new.message is not null and length(new.message) > 2000 then
+            raise exception 'Application message must be 2000 characters or fewer.'
+            using errcode = '22001';
+        end if;
+    end if;
+
+    if tg_op = 'UPDATE' then
+        -- Only a status transition is allowed, and only from pending.
+        if old.gig_id is distinct from new.gig_id
+            or old.worker_id is distinct from new.worker_id
+            or old.message is distinct from new.message
+            or old.created_at is distinct from new.created_at
+        then
+            raise exception 'Only the application status can be updated.'
+            using errcode = '23514';
+        end if;
+
+        if old.status is distinct from 'pending' then
+            raise exception 'Only pending applications can be updated.'
+            using errcode = '23514';
+        end if;
+
+        if new.status not in ('accepted', 'rejected') then
+            raise exception 'Applications can only be set to accepted or rejected.'
+            using errcode = '23514';
+        end if;
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists applications_enforce_rules on public.applications;
+
+create trigger applications_enforce_rules
+before insert or update on public.applications
+for each row
+execute function public.enforce_application_rules();
+
+-- ============================================================
+-- payment_transactions integrity
+-- ============================================================
+create or replace function public.enforce_payment_transaction_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    caller_role text := public.request_role();
+    gig public.gigs;
+begin
+    if caller_role = 'service_role' then
+        return new;
+    end if;
+
+    if tg_op = 'INSERT' or tg_op = 'UPDATE' then
+        new.status := 'pending';
+    end if;
+
+    if tg_op = 'INSERT' then
+        select * into gig
+        from public.gigs g
+        where g.id = new.gig_id;
+
+        if gig.id is null then
+            raise exception 'Payment does not reference an existing gig.'
+            using errcode = '23514';
+        end if;
+
+        if gig.poster_id is distinct from new.payer_id then
+            raise exception 'Payment records can only be created by the gig poster.'
+            using errcode = '23514';
+        end if;
+
+        if gig.agreed_price is null or gig.agreed_price is distinct from new.amount then
+            raise exception 'Payment amount must equal the agreed price on the gig.'
+            using errcode = '23514';
+        end if;
+
+        if new.amount is null
+            or new.amount <> floor(new.amount)
+            or new.amount < 1
+            or new.amount > 1000000
+        then
+            raise exception 'Payment amount must be a whole number between KES 1 and KES 1,000,000.'
+            using errcode = '23514';
+        end if;
+
+        if not exists (
+            select 1 from public.applications a
+            where a.gig_id = new.gig_id
+              and a.worker_id = new.worker_id
+              and a.status = 'accepted'
+        ) then
+            raise exception 'The selected worker does not have an accepted application for this gig.'
+            using errcode = '23514';
+        end if;
+
+        new.payer_id := gig.poster_id;
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists payment_transactions_enforce_rules on public.payment_transactions;
+
+create trigger payment_transactions_enforce_rules
+before insert or update on public.payment_transactions
+for each row
+execute function public.enforce_payment_transaction_rules();
+
+-- ============================================================
+-- profiles: hide phone/location from other users
+-- ============================================================
+create or replace view public.public_profile
+with (security_barrier = true)
+as
+    select p.user_id, p.full_name
+    from public.profiles p;
+
+revoke all on public.public_profile from anon;
+grant select on public.public_profile to authenticated;
+
+create or replace function public.get_my_profile()
+returns table (
+    full_name text,
+    phone text,
+    location text
+)
+language sql
+security definer
+set search_path = public
+as $$
+    select p.full_name, p.phone, p.location
+    from public.profiles p
+    where p.user_id = auth.uid();
+$$;
+
+create or replace function public.upsert_my_profile(
+    p_full_name text,
+    p_phone text,
+    p_location text
+)
+returns table (
+    full_name text,
+    phone text,
+    location text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    p_full_name := btrim(coalesce(p_full_name, ''));
+    p_phone := btrim(coalesce(p_phone, ''));
+    p_location := btrim(coalesce(p_location, ''));
+
+    if p_full_name = '' or length(p_full_name) > 100 then
+        raise exception 'Full name is required and must be 100 characters or fewer.'
+        using errcode = '23514';
+    end if;
+
+    if length(p_phone) > 20 then
+        raise exception 'Phone number must be 20 characters or fewer.'
+        using errcode = '22001';
+    end if;
+
+    if length(p_location) > 100 then
+        raise exception 'Location must be 100 characters or fewer.'
+        using errcode = '22001';
+    end if;
+
+    insert into public.profiles (user_id, full_name, phone, location)
+    values (
+        auth.uid(),
+        nullif(p_full_name, ''),
+        nullif(p_phone, ''),
+        nullif(p_location, '')
+    )
+    on conflict (user_id) do update
+    set full_name = excluded.full_name,
+        phone = excluded.phone,
+        location = excluded.location
+    where profiles.user_id = auth.uid();
+
+    return query
+    select p.full_name, p.phone, p.location
+    from public.profiles p
+    where p.user_id = auth.uid();
+end;
+$$;
+
+-- Clients no longer read/write the base table directly.
+drop policy if exists "Authenticated users can view profile names" on public.profiles;
+drop policy if exists "Users can view their own profile" on public.profiles;
+drop policy if exists "Enable insert for users based on user_id" on public.profiles;
+
+revoke all on public.profiles from anon;
+revoke all on public.profiles from authenticated;
+
+-- ============================================================
+-- Grant hygiene: every direct-table write is grant-scoped
+-- ============================================================
+revoke all on public.gigs from anon;
+revoke all on public.applications from anon;
+revoke all on public.payment_transactions from anon;
+revoke all on sequence public.gigs_id_seq
+    , public.applications_id_seq
+    , public.payment_transactions_id_seq
+    , public.profiles_id_seq
+from anon;
+
+grant select, insert, update on public.applications to authenticated;
+grant select, insert on public.payment_transactions to authenticated;
+
+commit;
+===== src/routes/gigs/[id]/+page.svelte =====
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { supabase } from '#lib/supabase/client.ts';
+
+	type Gig = {
+		id: number;
+		title: string;
+		description: string;
+		location: string | null;
+		budget: number | null;
+		status: string;
+		created_at: string;
+		poster_id: string;
+	};
+
+	let gig = $state<Gig | null>(null);
+	let message = $state('');
+	let loading = $state(true);
+	let submitting = $state(false);
+	let errorMessage = $state('');
+	let successMessage = $state('');
+
+	onMount(async () => {
+		try {
+			const {
+				data: { user }
+			} = await supabase.auth.getUser();
+
+			if (!user) {
+				await goto('/login');
+				return;
+			}
+
+			const gigId = Number(window.location.pathname.split('/').pop());
+
+			if (!gigId) {
+				errorMessage = 'Invalid gig ID.';
+				return;
+			}
+
+			const { data, error } = await supabase
+				.from('gigs')
+				.select(
+					'id, title, description, location, budget, status, created_at, poster_id'
+				)
+				.eq('id', gigId)
+				.eq('status', 'open')
+				.single();
+
+			if (error) {
+				errorMessage = error.message;
+				return;
+			}
+
+			gig = data;
+		} catch (error) {
+			errorMessage =
+				error instanceof Error ? error.message : 'Something went wrong.';
+		} finally {
+			loading = false;
+		}
+	});
+
+	async function handleApply() {
+		errorMessage = '';
+		successMessage = '';
+		submitting = true;
+
+		try {
+			const {
+				data: { user }
+			} = await supabase.auth.getUser();
+
+			if (!user || !gig) {
+				errorMessage = 'You must be logged in to apply.';
+				return;
+			}
+
+			if (gig.poster_id === user.id) {
+				errorMessage = 'You cannot apply to your own gig.';
+				return;
+			}
+
+			const { error } = await supabase.from('applications').insert({
+				gig_id: gig.id,
+				worker_id: user.id,
+				message: message || null,
+				status: 'pending'
+			});
+
+			if (error) {
+				if (error.code === '23505') {
+					errorMessage = 'You have already applied for this gig.';
+				} else {
+					errorMessage = error.message;
+				}
+				return;
+			}
+
+			successMessage = 'Application submitted successfully!';
+			message = '';
+		} catch (error) {
+			errorMessage =
+				error instanceof Error ? error.message : 'Something went wrong.';
+		} finally {
+			submitting = false;
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>{gig ? `${gig.title} | Kichele Link` : 'Gig | Kichele Link'}</title>
+	<meta
+		name="description"
+		content="View gig details and apply on Kichele Link."
+	/>
+</svelte:head>
+
+<div class="min-h-screen bg-slate-50 text-slate-900">
+	<!-- Header -->
+	<header class="border-b border-slate-200 bg-white">
+		<div
+			class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8"
+		>
+			<a href="/" class="flex items-center gap-3">
+				<div
+					class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-lg font-black text-white shadow-sm"
+				>
+					K
+				</div>
+
+				<div>
+					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">
+						Kichele Link
+					</h1>
+					<p class="text-xs font-medium text-slate-500">
+						Pata Kazi, Pata Kichele.
+					</p>
+				</div>
+			</a>
+
+			<a
+				href="/gigs"
+				class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+			>
+				← Back to Gigs
+			</a>
+		</div>
+	</header>
+
+	<main class="mx-auto max-w-5xl px-5 py-10 sm:px-6 lg:px-8">
+		{#if loading}
+			<!-- Loading state -->
+			<div class="grid gap-6 lg:grid-cols-3">
+				<div class="animate-pulse rounded-3xl border border-slate-200 bg-white p-7 lg:col-span-2">
+					<div class="h-6 w-20 rounded bg-slate-200"></div>
+					<div class="mt-6 h-9 w-3/4 rounded bg-slate-200"></div>
+					<div class="mt-6 h-4 w-full rounded bg-slate-100"></div>
+					<div class="mt-2 h-4 w-5/6 rounded bg-slate-100"></div>
+					<div class="mt-8 h-4 w-32 rounded bg-slate-100"></div>
+				</div>
+
+				<div class="animate-pulse rounded-3xl border border-slate-200 bg-white p-7">
+					<div class="h-6 w-32 rounded bg-slate-200"></div>
+					<div class="mt-6 h-24 rounded bg-slate-100"></div>
+					<div class="mt-5 h-11 rounded bg-slate-200"></div>
+				</div>
+			</div>
+
+		{:else if errorMessage && !gig}
+			<!-- Error state -->
+			<div class="rounded-3xl border border-red-200 bg-red-50 p-7">
+				<div class="flex items-start gap-4">
+					<div
+						class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 font-bold text-red-700"
+					>
+						!
+					</div>
+
+					<div>
+						<h2 class="font-bold text-red-900">Could not load gig</h2>
+						<p class="mt-1 text-sm leading-6 text-red-700">
+							{errorMessage}
+						</p>
+
+						<a
+							href="/gigs"
+							class="mt-5 inline-block rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white"
+						>
+							Back to Gigs
+						</a>
+					</div>
+				</div>
+			</div>
+
+		{:else if gig}
+			<div class="grid gap-6 lg:grid-cols-3">
+				<!-- Gig details -->
+				<section
+					class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 lg:col-span-2"
+				>
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<span
+							class="rounded-full bg-green-50 px-3 py-1.5 text-xs font-bold text-blue-700"
+						>
+							Open gig
+						</span>
+
+						{#if gig.budget !== null}
+							<div class="text-right">
+								<p class="text-xs font-medium text-slate-400">Budget</p>
+								<p class="text-xl font-black text-green-700">
+									KSh {gig.budget.toLocaleString()}
+								</p>
+							</div>
+						{/if}
+					</div>
+
+					<h2
+						class="mt-6 text-3xl font-black leading-tight tracking-tight text-slate-950 sm:text-4xl"
+					>
+						{gig.title}
+					</h2>
+
+					<div class="mt-7 border-t border-slate-100 pt-7">
+						<p class="text-xs font-bold uppercase tracking-wider text-slate-400">
+							About this gig
+						</p>
+
+						<p class="mt-3 text-base leading-7 text-slate-600">
+							{gig.description}
+						</p>
+					</div>
+
+					<div class="mt-8 grid gap-4 sm:grid-cols-2">
+						{#if gig.location}
+							<div class="rounded-2xl bg-slate-50 p-4">
+								<p class="text-xs font-bold uppercase tracking-wider text-slate-400">
+									Location
+								</p>
+
+								<p class="mt-2 font-bold text-slate-900">
+									📍 {gig.location}
+								</p>
+							</div>
+						{/if}
+
+						<div class="rounded-2xl bg-slate-50 p-4">
+							<p class="text-xs font-bold uppercase tracking-wider text-slate-400">
+								Posted
+							</p>
+
+							<p class="mt-2 font-bold text-slate-900">
+								{new Date(gig.created_at).toLocaleDateString()}
+							</p>
+						</div>
+					</div>
+				</section>
+
+				<!-- Application -->
+				<section
+					class="h-fit rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-7"
+				>
+					<p class="text-sm font-bold uppercase tracking-wider text-green-600">
+						Ready to work?
+					</p>
+
+					<h3 class="mt-2 text-2xl font-black tracking-tight text-slate-950">
+						Apply for this gig
+					</h3>
+
+					<p class="mt-2 text-sm leading-6 text-slate-500">
+						Send the gig poster a short message about your application.
+					</p>
+
+					<form
+						onsubmit={(event) => {
+							event.preventDefault();
+							handleApply();
+						}}
+						class="mt-6 space-y-5"
+					>
+						<div>
+							<label
+								for="message"
+								class="block text-sm font-bold text-slate-700"
+							>
+								Message
+							</label>
+
+							<textarea
+								id="message"
+								bind:value={message}
+								rows="6"
+								placeholder="Tell the poster why you are interested..."
+								class="mt-2 w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							></textarea>
+						</div>
+
+						{#if errorMessage}
+							<div class="rounded-xl border border-red-200 bg-red-50 p-4">
+								<p class="text-sm leading-6 text-red-700">
+									{errorMessage}
+								</p>
+							</div>
+						{/if}
+
+						{#if successMessage}
+							<div class="rounded-xl border border-green-200 bg-green-50 p-4">
+								<p class="text-sm font-medium leading-6 text-green-700">
+									{successMessage}
+								</p>
+							</div>
+						{/if}
+
+						<button
+							type="submit"
+							disabled={submitting || successMessage !== ''}
+							class="w-full rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							{submitting
+								? 'Submitting...'
+								: successMessage
+									? 'Application Submitted'
+									: 'Apply for Gig'}
+						</button>
+					</form>
+				</section>
+			</div>
+		{/if}
+	</main>
+
+	<footer class="mt-10 border-t border-slate-200 bg-white">
+		<div
+			class="mx-auto max-w-7xl px-5 py-6 text-center text-sm text-slate-500 sm:px-6 lg:px-8"
+		>
+			© 2026 Kichele Link · Pata Kazi, Pata Kichele.
+		</div>
+	</footer>
+</div>===== src/routes/gigs/[id]/edit/+page.svelte =====
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { supabase } from '#lib/supabase/client.ts';
+
+	const categories = [
+		'Cleaning',
+		'Construction',
+		'Delivery',
+		'Gardening',
+		'Hair & Beauty',
+		'Moving',
+		'Repairs',
+		'Transport',
+		'Other'
+	];
+
+	let loading = $state(true);
+	let saving = $state(false);
+	let errorMessage = $state('');
+	let successMessage = $state('');
+
+	let gigId = $state<number | null>(null);
+
+	let title = $state('');
+	let description = $state('');
+	let category = $state('');
+	let location = $state('');
+	let budget = $state('');
+
+	onMount(async () => {
+		try {
+			const {
+				data: { user },
+				error: authError
+			} = await supabase.auth.getUser();
+
+			if (authError || !user) {
+				goto('/login');
+				return;
+			}
+
+			// URL format: /gigs/5/edit
+			// The gig ID is at index 2.
+			const id = Number(window.location.pathname.split('/')[2]);
+
+			if (!id || Number.isNaN(id)) {
+				errorMessage = 'Invalid gig.';
+				return;
+			}
+
+			gigId = id;
+
+			const { data: gig, error: gigError } = await supabase
+				.from('gigs')
+				.select(
+					'id, title, description, category, location, budget, poster_id'
+				)
+				.eq('id', id)
+				.single();
+
+			if (gigError) {
+				errorMessage = gigError.message;
+				return;
+			}
+
+			if (gig.poster_id !== user.id) {
+				errorMessage = 'You can only edit your own gigs.';
+				return;
+			}
+
+			title = gig.title;
+			description = gig.description;
+			category = gig.category ?? '';
+			location = gig.location ?? '';
+			budget = gig.budget?.toString() ?? '';
+		} catch (error) {
+			errorMessage =
+				error instanceof Error ? error.message : 'Something went wrong.';
+		} finally {
+			loading = false;
+		}
+	});
+
+	async function saveGig() {
+		errorMessage = '';
+		successMessage = '';
+
+		if (!gigId) {
+			errorMessage = 'Invalid gig.';
+			return;
+		}
+
+		if (!title.trim()) {
+			errorMessage = 'Please enter a gig title.';
+			return;
+		}
+
+		if (!description.trim()) {
+			errorMessage = 'Please enter a gig description.';
+			return;
+		}
+
+		saving = true;
+
+		const { error } = await supabase
+			.from('gigs')
+			.update({
+				title: title.trim(),
+				description: description.trim(),
+				category: category || null,
+				location: location.trim() || null,
+				budget: budget ? Number(budget) : null
+			})
+			.eq('id', gigId);
+
+		if (error) {
+			errorMessage = error.message;
+			saving = false;
+			return;
+		}
+
+		successMessage = 'Gig updated successfully.';
+		saving = false;
+	}
+
+	function goBack() {
+		goto('/dashboard');
+	}
+</script>
+
+<svelte:head>
+	<title>Edit Gig | Kichele Link</title>
+	<meta
+		name="description"
+		content="Edit your Kichele Link gig."
+	/>
+</svelte:head>
+
+<div class="min-h-screen bg-slate-50">
+	<header class="border-b border-slate-200 bg-white">
+		<div
+			class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8"
+		>
+			<a href="/" class="flex items-center gap-3">
+				<div
+					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white shadow-sm"
+				>
+					K
+				</div>
+
+				<div>
+					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">
+						Kichele Link
+					</h1>
+					<p class="text-xs font-medium text-slate-500">
+						Pata Kazi, Pata Kichele.
+					</p>
+				</div>
+			</a>
+
+			<a
+				href="/dashboard"
+				class="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+			>
+				Back to Dashboard
+			</a>
+		</div>
+	</header>
+
+	<main class="mx-auto max-w-3xl px-5 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8">
+			<p class="text-sm font-bold text-green-700">MANAGE YOUR GIG</p>
+
+			<h2
+				class="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl"
+			>
+				Edit Gig
+			</h2>
+
+			<p class="mt-2 text-sm leading-6 text-slate-500 sm:text-base">
+				Update the details of your gig.
+			</p>
+		</div>
+
+		{#if loading}
+			<div
+				class="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm"
+			>
+				<div
+					class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-green-100 text-xl font-black text-green-700"
+				>
+					K
+				</div>
+
+				<h3 class="mt-5 text-lg font-bold text-slate-900">
+					Loading gig...
+				</h3>
+			</div>
+		{:else}
+			<div
+				class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
+			>
+				{#if errorMessage}
+					<div class="mb-6 rounded-xl border border-red-200 bg-red-50 p-4">
+						<p class="text-sm leading-6 text-red-700">
+							{errorMessage}
+						</p>
+					</div>
+				{/if}
+
+				{#if successMessage}
+					<div
+						class="mb-6 rounded-xl border border-green-200 bg-green-50 p-4"
+					>
+						<p class="text-sm leading-6 text-green-700">
+							{successMessage}
+						</p>
+					</div>
+				{/if}
+
+				<form
+					onsubmit={(event) => {
+						event.preventDefault();
+						saveGig();
+					}}
+					class="space-y-6"
+				>
+					<div>
+						<label
+							for="title"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Gig title
+						</label>
+
+						<input
+							id="title"
+							type="text"
+							bind:value={title}
+							placeholder="e.g. Help me move furniture"
+							class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-600 focus:ring-2 focus:ring-green-100"
+						/>
+					</div>
+
+					<div>
+						<label
+							for="description"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Description
+						</label>
+
+						<textarea
+							id="description"
+							rows="5"
+							bind:value={description}
+							placeholder="Describe what needs to be done..."
+							class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-600 focus:ring-2 focus:ring-green-100"
+						></textarea>
+					</div>
+
+					<div>
+						<label
+							for="category"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Category
+						</label>
+
+						<select
+							id="category"
+							bind:value={category}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-600 focus:ring-2 focus:ring-green-100"
+						>
+							<option value="">Select a category</option>
+
+							{#each categories as item}
+								<option value={item}>{item}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div class="grid gap-6 sm:grid-cols-2">
+						<div>
+							<label
+								for="location"
+								class="mb-2 block text-sm font-bold text-slate-700"
+							>
+								Location
+							</label>
+
+							<input
+								id="location"
+								type="text"
+								bind:value={location}
+								placeholder="e.g. Langata"
+								class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-600 focus:ring-2 focus:ring-green-100"
+							/>
+						</div>
+
+						<div>
+							<label
+								for="budget"
+								class="mb-2 block text-sm font-bold text-slate-700"
+							>
+								Budget (KSh)
+							</label>
+
+							<input
+								id="budget"
+								type="number"
+								min="0"
+								step="1"
+								bind:value={budget}
+								placeholder="e.g. 1000"
+								class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-600 focus:ring-2 focus:ring-green-100"
+							/>
+						</div>
+					</div>
+
+					<div class="flex flex-col gap-3 pt-2 sm:flex-row">
+						<button
+							type="submit"
+							disabled={saving}
+							class="flex-1 rounded-xl bg-green-600 px-5 py-3.5 text-sm font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							{saving ? 'Saving...' : 'Save Changes'}
+						</button>
+
+						<button
+							type="button"
+							onclick={goBack}
+							class="rounded-xl border border-slate-300 px-5 py-3.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+						>
+							Cancel
+						</button>
+					</div>
+				</form>
+			</div>
+		{/if}
+	</main>
+</div>===== src/routes/marketplace/+page.svelte =====
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import type { User } from '@supabase/supabase-js';
+	import { supabase } from '#lib/supabase/client.ts';
+
+	type Gig = {
+		id: number;
+		created_at: string;
+		poster_id: string;
+		title: string;
+		description: string;
+		location: string;
+		budget: number;
+		status: string;
+		category: string;
+		agreed_price: number | null;
+		payment_status: string;
+		poster_name?: string;
+	};
+
+	let user = $state<User | null>(null);
+	let gigs = $state<Gig[]>([]);
+	let loading = $state(true);
+	let errorMessage = $state('');
+	let searchTerm = $state('');
+	let selectedCategory = $state('All');
+
+	const categories = ['All', 'Cleaning', 'Technology', 'Delivery', 'Repairs', 'Transport', 'Other'];
+
+	onMount(async () => {
+		const { data: authData, error: authError } = await supabase.auth.getUser();
+
+		if (authError || !authData.user) {
+			goto('/login');
+			return;
+		}
+
+		user = authData.user;
+		await loadGigs();
+	});
+
+	async function loadGigs() {
+		loading = true;
+		errorMessage = '';
+
+		const { data, error } = await supabase
+			.from('gigs')
+			.select(
+				'id, created_at, poster_id, title, description, location, budget, status, category, agreed_price, payment_status'
+			)
+			.eq('status', 'open')
+			.order('created_at', { ascending: false });
+
+		if (error) {
+			errorMessage = `Could not load gigs: ${error.message}`;
+			loading = false;
+			return;
+		}
+
+		const loadedGigs = (data ?? []) as Gig[];
+
+		const posterIds = [...new Set(loadedGigs.map((gig) => gig.poster_id))];
+
+		let profileMap = new Map<string, string>();
+
+		if (posterIds.length > 0) {
+			const { data: profiles } = await supabase
+				.from('public_profile')
+				.select('user_id, full_name')
+				.in('user_id', posterIds);
+
+			profileMap = new Map(
+				(profiles ?? [])
+					.filter((profile) => profile.user_id)
+					.map((profile) => [profile.user_id as string, profile.full_name || 'Kichele Link user'])
+			);
+		}
+
+		gigs = loadedGigs.map((gig) => ({
+			...gig,
+			poster_name: profileMap.get(gig.poster_id) || 'Kichele Link user'
+		}));
+
+		loading = false;
+	}
+
+	function filteredGigs() {
+		const search = searchTerm.trim().toLowerCase();
+
+		return gigs.filter((gig) => {
+			const matchesCategory =
+				selectedCategory === 'All' || gig.category === selectedCategory;
+
+			const matchesSearch =
+				search === '' ||
+				gig.title.toLowerCase().includes(search) ||
+				gig.description.toLowerCase().includes(search) ||
+				gig.location.toLowerCase().includes(search) ||
+				gig.category.toLowerCase().includes(search);
+
+			return matchesCategory && matchesSearch;
+		});
+	}
+
+	function openGig(gigId: number) {
+		goto(`/gigs/${gigId}`);
+	}
+
+	function signOut() {
+		supabase.auth.signOut();
+		goto('/login');
+	}
+</script>
+
+<svelte:head>
+	<title>Find Gigs | Kichele Link</title>
+	<meta
+		name="description"
+		content="Find available gigs and quick jobs on Kichele Link."
+	/>
+</svelte:head>
+
+<div class="min-h-screen bg-slate-50">
+	<header class="border-b border-slate-200 bg-white">
+		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+			<a href="/" class="text-2xl font-bold text-slate-900">
+				Kichele Link
+			</a>
+
+			<div class="flex items-center gap-4">
+				<a
+					href="/worker"
+					class="rounded-lg px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+				>
+					Worker Dashboard
+				</a>
+
+				{#if user}
+					<span class="hidden text-sm text-slate-500 md:inline">
+						{user.email}
+					</span>
+				{/if}
+
+				<button
+					type="button"
+					onclick={signOut}
+					class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+				>
+					Sign out
+				</button>
+			</div>
+		</div>
+	</header>
+
+	<main class="mx-auto max-w-6xl px-6 py-10">
+		<div class="mb-8">
+			<p class="mb-2 text-sm font-bold uppercase tracking-widest text-blue-600">
+				WORKER SPACE
+			</p>
+
+			<h1 class="text-4xl font-bold text-slate-900">
+				Find Gigs
+			</h1>
+
+			<p class="mt-2 text-slate-600">
+				Find available work and apply for gigs that match your skills.
+			</p>
+		</div>
+
+		<div class="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+			<div class="grid gap-4 md:grid-cols-[1fr_auto]">
+				<input
+					bind:value={searchTerm}
+					type="text"
+					placeholder="Search gigs, locations, categories..."
+					class="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-blue-500"
+				/>
+
+				<select
+					bind:value={selectedCategory}
+					class="rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-blue-500"
+				>
+					{#each categories as category}
+						<option value={category}>{category}</option>
+					{/each}
+				</select>
+			</div>
+		</div>
+
+		{#if loading}
+			<div class="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+				<p class="text-slate-600">Loading available gigs...</p>
+			</div>
+		{:else if errorMessage}
+			<div class="rounded-2xl border border-red-200 bg-red-50 p-6">
+				<p class="font-semibold text-red-700">{errorMessage}</p>
+
+				<button
+					type="button"
+					onclick={loadGigs}
+					class="mt-4 rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700"
+				>
+					Try Again
+				</button>
+			</div>
+		{:else if filteredGigs().length === 0}
+			<div class="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+				<div class="mb-3 text-4xl">🛠️</div>
+
+				<h2 class="text-xl font-bold text-slate-900">
+					No gigs found
+				</h2>
+
+				<p class="mt-2 text-slate-600">
+					Try another search or category.
+				</p>
+			</div>
+		{:else}
+			<div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+				{#each filteredGigs() as gig}
+					<article
+						class="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+					>
+						<div class="mb-4 flex items-start justify-between gap-3">
+							<span
+								class="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700"
+							>
+								{gig.category}
+							</span>
+
+							<span class="text-sm font-bold text-blue-600">
+								Open
+							</span>
+						</div>
+
+						<h2 class="text-xl font-bold text-slate-900">
+							{gig.title}
+						</h2>
+
+						<p class="mt-2 line-clamp-3 text-sm text-slate-600">
+							{gig.description}
+						</p>
+
+						<div class="mt-5 space-y-2 text-sm">
+							<div class="flex justify-between gap-3">
+								<span class="text-slate-500">Location</span>
+								<strong class="text-slate-800">{gig.location}</strong>
+							</div>
+
+							<div class="flex justify-between gap-3">
+								<span class="text-slate-500">Budget</span>
+								<strong class="text-slate-900">
+									KSh {gig.budget.toLocaleString()}
+								</strong>
+							</div>
+
+							<div class="flex justify-between gap-3">
+								<span class="text-slate-500">Posted by</span>
+								<strong class="text-slate-800">
+									{gig.poster_name}
+								</strong>
+							</div>
+						</div>
+
+						<button
+							type="button"
+							onclick={() => openGig(gig.id)}
+							class="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3 font-bold text-white hover:bg-blue-700"
+						>
+							View Gig
+						</button>
+					</article>
+				{/each}
+			</div>
+		{/if}
+	</main>
+</div>===== src/routes/profile/+page.svelte =====
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { supabase } from '#lib/supabase/client.ts';
+
+	let userId = $state('');
+	let email = $state('');
+	let fullName = $state('');
+	let phone = $state('');
+	let location = $state('');
+
+	let loading = $state(true);
+	let saving = $state(false);
+	let message = $state('');
+	let error = $state('');
+
+	type MyProfile = {
+		full_name: string | null;
+		phone: string | null;
+		location: string | null;
+	};
+
+	onMount(async () => {
+		try {
+			const {
+				data: { user },
+				error: authError
+			} = await supabase.auth.getUser();
+
+			if (authError || !user) {
+				goto('/login');
+				return;
+			}
+
+			userId = user.id;
+			email = user.email ?? '';
+
+			const { data: profileData, error: profileError } = await supabase.rpc(
+				'get_my_profile'
+			);
+
+			if (profileError) {
+				console.error('Profile load failed:', profileError);
+				error = `${profileError.message} (Code: ${profileError.code ?? 'unknown'})`;
+				return;
+			}
+
+			const profile = (profileData as MyProfile[] | null)?.[0] ?? null;
+
+			if (profile) {
+				fullName = profile.full_name ?? '';
+				phone = profile.phone ?? '';
+				location = profile.location ?? '';
+			} else {
+				fullName = user.user_metadata?.full_name ?? '';
+			}
+		} catch (loadError) {
+			console.error('Profile loading error:', loadError);
+			error = 'Something went wrong while loading your profile.';
+		} finally {
+			loading = false;
+		}
+	});
+
+	async function saveProfile(event: SubmitEvent) {
+		event.preventDefault();
+
+		if (saving) return;
+
+		error = '';
+		message = '';
+
+		const cleanedName = fullName.trim();
+		const cleanedPhone = phone.trim();
+		const cleanedLocation = location.trim();
+
+		if (!cleanedName) {
+			error = 'Please enter your full name.';
+			return;
+		}
+
+		if (cleanedName.length > 100) {
+			error = 'Your name must be 100 characters or fewer.';
+			return;
+		}
+
+		if (cleanedPhone.length > 20) {
+			error = 'Your phone number must be 20 characters or fewer.';
+			return;
+		}
+
+		if (cleanedLocation.length > 100) {
+			error = 'Your location must be 100 characters or fewer.';
+			return;
+		}
+
+		if (!userId) {
+			error = 'Your session has expired. Please sign in again.';
+			goto('/login');
+			return;
+		}
+
+		saving = true;
+
+		try {
+			const { error: saveError } = await supabase.rpc('upsert_my_profile', {
+				p_full_name: cleanedName,
+				p_phone: cleanedPhone,
+				p_location: cleanedLocation
+			});
+
+			if (saveError) {
+				console.error('Profile save failed:', saveError);
+
+				error = `${saveError.message} (Code: ${saveError.code ?? 'unknown'})`;
+				return;
+			}
+
+			fullName = cleanedName;
+			phone = cleanedPhone;
+			location = cleanedLocation;
+
+			message = 'Your profile has been saved successfully.';
+		} catch (saveError) {
+			console.error('Profile saving error:', saveError);
+
+			error = 'Something went wrong while saving your profile.';
+		} finally {
+			saving = false;
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>My Profile | Kichele Link</title>
+	<meta
+		name="description"
+		content="Manage your Kichele Link profile information."
+	/>
+</svelte:head>
+
+<div class="min-h-screen bg-slate-50 text-slate-900">
+	<header class="border-b border-slate-200 bg-white">
+		<div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
+			<a href="/" class="flex items-center gap-3">
+				<div
+					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white"
+				>
+					K
+				</div>
+
+				<div>
+					<p class="text-lg font-black tracking-tight">Kichele Link</p>
+					<p class="text-xs text-slate-500">Local gigs. Real opportunities.</p>
+				</div>
+			</a>
+
+			<nav class="flex flex-wrap items-center gap-2 sm:gap-3">
+				<a
+					href="/dashboard"
+					class="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+				>
+					Dashboard
+				</a>
+
+				<a
+					href="/gigs"
+					class="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+				>
+					Find Gigs
+				</a>
+			</nav>
+		</div>
+	</header>
+
+	<main class="mx-auto max-w-3xl px-6 py-12">
+		{#if loading}
+			<div class="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+				<p class="text-sm text-slate-500">Loading your profile...</p>
+			</div>
+		{:else}
+			<div class="mb-8">
+				<p class="text-sm font-bold uppercase tracking-widest text-green-600">
+					My Profile
+				</p>
+
+				<h1 class="mt-2 text-4xl font-black tracking-tight text-slate-900">
+					Your profile
+				</h1>
+
+				<p class="mt-3 text-slate-600">
+					Keep your contact information up to date so people can recognize and
+					reach you when needed.
+				</p>
+			</div>
+
+			<div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+				<div class="mb-8 rounded-2xl bg-slate-50 p-5">
+					<p class="text-xs font-bold uppercase tracking-wider text-slate-500">
+						Account email
+					</p>
+
+					<p class="mt-2 break-all font-semibold text-slate-900">
+						{email || 'No email available'}
+					</p>
+
+					<p class="mt-1 text-sm text-slate-500">
+						Your login email cannot be changed here.
+					</p>
+				</div>
+
+				<form onsubmit={saveProfile} class="space-y-6">
+					<div>
+						<label
+							for="fullName"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Full name <span class="text-red-600">*</span>
+						</label>
+
+						<input
+							id="fullName"
+							name="fullName"
+							type="text"
+							bind:value={fullName}
+							maxlength={100}
+							autocomplete="name"
+							placeholder="Enter your full name"
+							required
+							disabled={saving}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
+						/>
+					</div>
+
+					<div>
+						<label
+							for="phone"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Phone number
+						</label>
+
+						<input
+							id="phone"
+							name="phone"
+							type="tel"
+							bind:value={phone}
+							maxlength={20}
+							autocomplete="tel"
+							placeholder="e.g. 0712345678"
+							disabled={saving}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
+						/>
+
+						<p class="mt-2 text-xs text-slate-500">
+							Use a number where other users can reach you about a gig.
+						</p>
+					</div>
+
+					<div>
+						<label
+							for="location"
+							class="mb-2 block text-sm font-bold text-slate-700"
+						>
+							Location
+						</label>
+
+						<input
+							id="location"
+							name="location"
+							type="text"
+							bind:value={location}
+							maxlength={100}
+							autocomplete="address-level2"
+							placeholder="e.g. Gilgil, Nakuru"
+							disabled={saving}
+							class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-4 focus:ring-green-100 disabled:opacity-60"
+						/>
+					</div>
+
+					{#if error}
+						<div
+							role="alert"
+							class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+						>
+							{error}
+						</div>
+					{/if}
+
+					{#if message}
+						<div
+							role="status"
+							class="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700"
+						>
+							{message}
+						</div>
+					{/if}
+
+					<div class="flex flex-col gap-3 border-t border-slate-200 pt-6 sm:flex-row">
+						<button
+							type="submit"
+							disabled={saving}
+							class="rounded-xl bg-green-600 px-6 py-3 font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+						>
+							{saving ? 'Saving profile...' : 'Save changes'}
+						</button>
+
+						<a
+							href="/dashboard"
+							class="rounded-xl border border-slate-300 px-6 py-3 text-center font-bold text-slate-700 transition hover:bg-slate-50"
+						>
+							Back to dashboard
+						</a>
+					</div>
+				</form>
+			</div>
+		{/if}
+	</main>
+
+	<footer class="border-t border-slate-200 bg-white">
+		<div class="mx-auto max-w-6xl px-6 py-8 text-center text-sm text-slate-500">
+			© 2026 Kichele Link. Local gigs. Real opportunities.
+		</div>
+	</footer>
+</div>===== src/routes/worker/applications/+page.svelte =====
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { supabase } from '#lib/supabase/client.ts';
+	import type { User } from '@supabase/supabase-js';
+
+	type Application = {
+		id: number;
+		gig_id: number;
+		worker_id: string;
+		message: string | null;
+		status: string;
+		created_at: string;
+		gig: {
+			title: string;
+			description: string | null;
+			location: string | null;
+			budget: number | null;
+			category: string | null;
+			status: string;
+		} | null;
+	};
+
+	let user = $state<User | null>(null);
+	let applications = $state<Application[]>([]);
+	let loading = $state(true);
+	let errorMessage = $state('');
+
+	onMount(async () => {
+		const {
+			data: { user: currentUser }
+		} = await supabase.auth.getUser();
+
+		if (!currentUser) {
+			await goto('/login');
+			return;
+		}
+
+		user = currentUser;
+
+		const { data, error } = await supabase
+			.from('applications')
+			.select(`
+				id,
+				gig_id,
+				worker_id,
+				message,
+				status,
+				created_at,
+				gigs (
+					title,
+					description,
+					location,
+					budget,
+					category,
+					status
+				)
+			`)
+			.eq('worker_id', currentUser.id)
+			.order('created_at', { ascending: false });
+
+		if (error) {
+			errorMessage = `Could not load your applications: ${error.message}`;
+			loading = false;
+			return;
+		}
+
+		applications = (data ?? []).map((application) => ({
+			...application,
+			gig: Array.isArray(application.gigs)
+				? application.gigs[0] ?? null
+				: application.gigs ?? null
+		})) as Application[];
+
+		loading = false;
+	});
+
+	async function signOut() {
+		await supabase.auth.signOut();
+		await goto('/login');
+	}
+
+	function formatDate(date: string) {
+		return new Date(date).toLocaleDateString('en-KE', {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric'
+		});
+	}
+
+	function formatAmount(amount: number | null) {
+		if (amount === null) return 'Not specified';
+
+		return `KSh ${amount.toLocaleString('en-KE')}`;
+	}
+
+	function statusClass(status: string) {
+		switch (status.toLowerCase()) {
+			case 'accepted':
+				return 'bg-green-100 text-blue-700';
+
+			case 'rejected':
+				return 'bg-red-100 text-red-700';
+
+			default:
+				return 'bg-yellow-100 text-yellow-700';
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>My Applications | Kichele Link</title>
+	<meta
+		name="description"
+		content="View your gig applications and their status on Kichele Link."
+	/>
+</svelte:head>
+
+{#if loading}
+	<div class="flex min-h-screen items-center justify-center bg-slate-50">
+		<p class="text-slate-600">Loading your applications...</p>
+	</div>
+{:else}
+	<div class="min-h-screen bg-slate-50">
+		<header class="border-b bg-white">
+			<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+				<div>
+					<a href="/" class="text-2xl font-bold text-blue-600">Kichele Link</a>
+					<p class="text-sm text-slate-500">My Applications</p>
+				</div>
+
+				<div class="flex items-center gap-4">
+					<a
+						href="/worker"
+						class="hidden text-sm font-medium text-blue-600 hover:text-blue-700 sm:block"
+					>
+						Worker Dashboard
+					</a>
+
+					{#if user}
+						<span class="hidden text-sm text-slate-600 md:block">
+							{user.email}
+						</span>
+					{/if}
+
+					<button
+						onclick={signOut}
+						class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+					>
+						Sign out
+					</button>
+				</div>
+			</div>
+		</header>
+
+		<main class="mx-auto max-w-6xl px-6 py-10">
+			<div class="mb-8">
+				<p class="text-sm font-semibold uppercase tracking-wide text-blue-600">
+					WORKER SPACE
+				</p>
+
+				<h1 class="mt-2 text-3xl font-bold text-slate-900">
+					My Applications
+				</h1>
+
+				<p class="mt-2 text-slate-600">
+					Track the gigs you have applied for and see whether you were selected.
+				</p>
+			</div>
+
+			{#if errorMessage}
+				<div class="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+					{errorMessage}
+				</div>
+			{/if}
+
+			{#if applications.length === 0}
+				<div class="rounded-2xl border bg-white p-10 text-center shadow-sm">
+					<div class="text-5xl">📋</div>
+
+					<h2 class="mt-4 text-xl font-bold text-slate-900">
+						No applications yet
+					</h2>
+
+					<p class="mx-auto mt-2 max-w-md text-slate-600">
+						You haven't applied for any gigs yet. Browse available gigs and send
+						your first application.
+					</p>
+
+					<a
+						href="/marketplace"
+						class="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
+					>
+						Find Gigs
+					</a>
+				</div>
+			{:else}
+				<div class="space-y-5">
+					{#each applications as application}
+						<div class="rounded-2xl border bg-white p-6 shadow-sm">
+							<div class="flex flex-col justify-between gap-4 md:flex-row">
+								<div>
+									<div class="flex flex-wrap items-center gap-3">
+										<h2 class="text-xl font-bold text-slate-900">
+											{application.gig?.title ?? 'Gig'}
+										</h2>
+
+										<span
+											class={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${statusClass(application.status)}`}
+										>
+											{application.status}
+										</span>
+									</div>
+
+									{#if application.gig?.category}
+										<p class="mt-2 text-sm font-medium text-blue-600">
+											{application.gig.category}
+										</p>
+									{/if}
+								</div>
+
+								<div class="text-left md:text-right">
+									<p class="text-sm text-slate-500">Gig Budget</p>
+
+									<p class="text-lg font-bold text-slate-900">
+										{formatAmount(application.gig?.budget ?? null)}
+									</p>
+								</div>
+							</div>
+
+							{#if application.gig?.description}
+								<p class="mt-4 leading-6 text-slate-600">
+									{application.gig.description}
+								</p>
+							{/if}
+
+							<div class="mt-5 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+								{#if application.gig?.location}
+									<div>
+										<span class="font-semibold text-slate-800">Location:</span>
+										{application.gig.location}
+									</div>
+								{/if}
+
+								<div>
+									<span class="font-semibold text-slate-800">Applied:</span>
+									{formatDate(application.created_at)}
+								</div>
+							</div>
+
+							{#if application.message}
+								<div class="mt-5 rounded-lg bg-slate-50 p-4">
+									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+										Your application message
+									</p>
+
+									<p class="mt-2 text-sm leading-6 text-slate-700">
+										{application.message}
+									</p>
+								</div>
+							{/if}
+
+							{#if application.status === 'accepted'}
+								<div class="mt-5 rounded-lg border border-green-200 bg-green-50 p-4">
+									<p class="font-semibold text-ble-800">
+										🎉 Your application was accepted!
+									</p>
+
+									<p class="mt-1 text-sm text-green-700">
+										This job will appear in your My Jobs section.
+									</p>
+								</div>
+							{:else if application.status === 'rejected'}
+								<div class="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+									<p class="font-semibold text-red-800">
+										This application was not selected.
+									</p>
+								</div>
+							{:else}
+								<div class="mt-5 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+									<p class="font-semibold text-yellow-800">
+										Your application is still pending.
+									</p>
+
+									<p class="mt-1 text-sm text-yellow-700">
+										The gig poster has not made a final decision yet.
+									</p>
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</main>
+	</div>
+{/if}===== src/routes/worker/jobs/+page.svelte =====
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { supabase } from '#lib/supabase/client.ts';
+	import type { User } from '@supabase/supabase-js';
+
+	type Job = {
+		application_id: number;
+		gig_id: number;
+		status: string;
+		application_message: string | null;
+		applied_at: string;
+		gig: {
+			title: string;
+			description: string | null;
+			location: string | null;
+			budget: number | null;
+			agreed_price: number | null;
+			category: string | null;
+			status: string;
+			payment_status: string;
+		} | null;
+	};
+
+	let user = $state<User | null>(null);
+	let jobs = $state<Job[]>([]);
+	let loading = $state(true);
+	let errorMessage = $state('');
+
+	onMount(async () => {
+		const {
+			data: { user: currentUser }
+		} = await supabase.auth.getUser();
+
+		if (!currentUser) {
+			await goto('/login');
+			return;
+		}
+
+		user = currentUser;
+
+		const { data: applications, error } = await supabase
+			.from('applications')
+			.select(`
+				id,
+				gig_id,
+				status,
+				message,
+				created_at,
+				gigs (
+					title,
+					description,
+					location,
+					budget,
+					agreed_price,
+					category,
+					status,
+					payment_status
+				)
+			`)
+			.eq('worker_id', currentUser.id)
+			.eq('status', 'accepted')
+			.order('created_at', { ascending: false });
+
+		if (error) {
+			errorMessage = `Could not load your jobs: ${error.message}`;
+			loading = false;
+			return;
+		}
+
+		jobs = (applications ?? []).map((application) => ({
+			application_id: application.id,
+			gig_id: application.gig_id,
+			status: application.status,
+			application_message: application.message,
+			applied_at: application.created_at,
+			gig: Array.isArray(application.gigs)
+				? application.gigs[0] ?? null
+				: application.gigs ?? null
+		})) as Job[];
+
+		loading = false;
+	});
+
+	async function signOut() {
+		await supabase.auth.signOut();
+		await goto('/login');
+	}
+
+	function formatDate(date: string) {
+		return new Date(date).toLocaleDateString('en-KE', {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric'
+		});
+	}
+
+	function formatAmount(amount: number | null) {
+		if (amount === null) return 'Not specified';
+
+		return `KSh ${amount.toLocaleString('en-KE')}`;
+	}
+
+	function paymentClass(status: string) {
+		switch (status.toLowerCase()) {
+			case 'paid':
+				return 'bg-green-100 text-green-700';
+
+			case 'failed':
+				return 'bg-red-100 text-red-700';
+
+			default:
+				return 'bg-yellow-100 text-yellow-700';
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>My Jobs | Kichele Link</title>
+	<meta
+		name="description"
+		content="View your accepted jobs and payment status on Kichele Link."
+	/>
+</svelte:head>
+
+{#if loading}
+	<div class="flex min-h-screen items-center justify-center bg-slate-50">
+		<p class="text-slate-600">Loading your jobs...</p>
+	</div>
+{:else}
+	<div class="min-h-screen bg-slate-50">
+		<header class="border-b bg-white">
+			<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+				<div>
+					<a href="/" class="text-2xl font-bold text-blue-600">Kichele Link</a>
+					<p class="text-sm text-slate-500">My Jobs</p>
+				</div>
+
+				<div class="flex items-center gap-4">
+					<a
+						href="/worker"
+						class="hidden text-sm font-medium text-blue-600 hover:text-blue-700 sm:block"
+					>
+						Worker Dashboard
+					</a>
+
+					<a
+						href="/worker/applications"
+						class="hidden text-sm font-medium text-slate-600 hover:text-slate-900 md:block"
+					>
+						My Applications
+					</a>
+
+					{#if user}
+						<span class="hidden text-sm text-slate-600 lg:block">
+							{user.email}
+						</span>
+					{/if}
+
+					<button
+						onclick={signOut}
+						class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+					>
+						Sign out
+					</button>
+				</div>
+			</div>
+		</header>
+
+		<main class="mx-auto max-w-6xl px-6 py-10">
+			<div class="mb-8">
+				<p class="text-sm font-semibold uppercase tracking-wide text-blue-600">
+					WORKER SPACE
+				</p>
+
+				<h1 class="mt-2 text-3xl font-bold text-slate-900">
+					My Jobs
+				</h1>
+
+				<p class="mt-2 text-slate-600">
+					These are the gigs where your application has been accepted.
+				</p>
+			</div>
+
+			{#if errorMessage}
+				<div class="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+					{errorMessage}
+				</div>
+			{/if}
+
+			{#if jobs.length === 0}
+				<div class="rounded-2xl border bg-white p-10 text-center shadow-sm">
+					<div class="text-5xl">🛠️</div>
+
+					<h2 class="mt-4 text-xl font-bold text-slate-900">
+						No accepted jobs yet
+					</h2>
+
+					<p class="mx-auto mt-2 max-w-md text-slate-600">
+						When a poster accepts one of your applications, the job will appear
+						here.
+					</p>
+
+					<a
+						href="/marketplace"
+						class="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
+					>
+						Find Gigs
+					</a>
+				</div>
+			{:else}
+				<div class="space-y-5">
+					{#each jobs as job}
+						<div class="rounded-2xl border bg-white p-6 shadow-sm">
+							<div class="flex flex-col justify-between gap-4 md:flex-row">
+								<div>
+									<div class="flex flex-wrap items-center gap-3">
+										<h2 class="text-xl font-bold text-slate-900">
+											{job.gig?.title ?? 'Job'}
+										</h2>
+
+										<span
+											class="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700"
+										>
+											Accepted
+										</span>
+									</div>
+
+									{#if job.gig?.category}
+										<p class="mt-2 text-sm font-medium text-blue-600">
+											{job.gig.category}
+										</p>
+									{/if}
+								</div>
+
+								<div class="text-left md:text-right">
+									<p class="text-sm text-slate-500">Agreed Price</p>
+
+									<p class="text-xl font-bold text-slate-900">
+										{formatAmount(job.gig?.agreed_price ?? null)}
+									</p>
+								</div>
+							</div>
+
+							{#if job.gig?.description}
+								<p class="mt-4 leading-6 text-slate-600">
+									{job.gig.description}
+								</p>
+							{/if}
+
+							<div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+								<div class="rounded-lg bg-slate-50 p-4">
+									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+										Location
+									</p>
+
+									<p class="mt-1 font-medium text-slate-800">
+										{job.gig?.location ?? 'Not specified'}
+									</p>
+								</div>
+
+								<div class="rounded-lg bg-slate-50 p-4">
+									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+										Applied
+									</p>
+
+									<p class="mt-1 font-medium text-slate-800">
+										{formatDate(job.applied_at)}
+									</p>
+								</div>
+
+								<div class="rounded-lg bg-slate-50 p-4">
+									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+										Payment
+									</p>
+
+									<span
+										class={`mt-1 inline-block rounded-full px-3 py-1 text-xs font-semibold capitalize ${paymentClass(job.gig?.payment_status ?? 'unpaid')}`}
+									>
+										{job.gig?.payment_status ?? 'unpaid'}
+									</span>
+								</div>
+							</div>
+
+							{#if job.gig?.payment_status === 'paid'}
+								<div class="mt-5 rounded-lg border border-green-200 bg-green-50 p-4">
+									<p class="font-semibold text-green-800">
+										Payment completed
+									</p>
+
+									<p class="mt-1 text-sm text-green-700">
+										The agreed payment for this job has been marked as paid.
+									</p>
+								</div>
+							{:else}
+								<div class="mt-5 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+									<p class="font-semibold text-yellow-800">
+										Payment pending
+									</p>
+
+									<p class="mt-1 text-sm text-yellow-700">
+										The agreed price is {formatAmount(job.gig?.agreed_price ?? null)}.
+									</p>
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</main>
+	</div>
+{/if}

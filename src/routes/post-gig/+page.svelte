@@ -53,9 +53,7 @@
 
 <div class="min-h-screen bg-slate-50">
 	<header class="border-b border-slate-200 bg-white">
-		<div
-			class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8"
-		>
+		<div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-8">
 			<a href="/" class="flex items-center gap-3">
 				<div
 					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-600 text-lg font-black text-white shadow-sm"
@@ -64,12 +62,8 @@
 				</div>
 
 				<div>
-					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">
-						Kichele Link
-					</h1>
-					<p class="text-xs font-medium text-slate-500">
-						Pata Kazi, Pata Kichele.
-					</p>
+					<h1 class="text-xl font-extrabold tracking-tight text-slate-900">Kichele Link</h1>
+					<p class="text-xs font-medium text-slate-500">Pata Kazi, Pata Kichele.</p>
 				</div>
 			</a>
 
@@ -105,9 +99,7 @@
 					}}
 				>
 					<div>
-						<label for="title" class="block text-sm font-bold text-slate-700">
-							Gig title
-						</label>
+						<label for="title" class="block text-sm font-bold text-slate-700"> Gig title </label>
 
 						<input
 							id="title"
@@ -115,24 +107,20 @@
 							bind:value={title}
 							required
 							placeholder="e.g. Help move furniture"
-							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						/>
 
-						<p class="mt-2 text-xs text-slate-400">
-							Keep the title short and clear.
-						</p>
+						<p class="mt-2 text-xs text-slate-400">Keep the title short and clear.</p>
 					</div>
 
 					<div>
-						<label for="category" class="block text-sm font-bold text-slate-700">
-							Category
-						</label>
+						<label for="category" class="block text-sm font-bold text-slate-700"> Category </label>
 
 						<select
 							id="category"
 							bind:value={category}
 							required
-							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						>
 							<option value="" disabled>Select a category</option>
 							<option value="Cleaning">Cleaning</option>
@@ -162,7 +150,7 @@
 							required
 							rows="6"
 							placeholder="Describe what needs to be done..."
-							class="mt-2 w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+							class="mt-2 w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 						></textarea>
 
 						<p class="mt-2 text-xs text-slate-400">
@@ -181,14 +169,12 @@
 								type="text"
 								bind:value={location}
 								placeholder="e.g. Gilgil"
-								class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+								class="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 							/>
 						</div>
 
 						<div>
-							<label for="budget" class="block text-sm font-bold text-slate-700">
-								Budget
-							</label>
+							<label for="budget" class="block text-sm font-bold text-slate-700"> Budget </label>
 
 							<div class="relative mt-2">
 								<span
@@ -203,7 +189,7 @@
 									min="0"
 									bind:value={budget}
 									placeholder="1500"
-									class="w-full rounded-xl border border-slate-300 bg-white py-3 pl-14 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
+									class="w-full rounded-xl border border-slate-300 bg-white py-3 pr-4 pl-14 text-sm text-slate-900 transition outline-none placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
 								/>
 							</div>
 						</div>

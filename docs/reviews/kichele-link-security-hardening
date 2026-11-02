@@ -1,0 +1,29 @@
+# Kichele Link security hardening — review bundle
+
+## Included
+- `002_lock_down_rls.sql`: replacement draft for the local Supabase migration 002.
+
+## Important safety notes
+- This migration was written against the supplied live schema audit dated 2026-10-30.
+- The live schema uses BIGINT identity IDs for gigs and applications. Do not rewrite migration 001.
+- Do not reset the database.
+- Do not run `supabase db push` or apply this migration to the live project yet.
+- The SQL has been statically reviewed for consistency with the supplied schema, but it has NOT been executed against PostgreSQL/Supabase in this environment. It still needs testing against a disposable/local database before use.
+- Keep real M-Pesa/STK payments disabled while the frontend and Edge Function are being changed to the mock-only workflow.
+
+## What the migration changes
+- Adds `applications.agreed_price` so each accepted worker can have a separate agreed amount.
+- Adds `payment_transactions.application_id` to link a payment record to the accepted application.
+- Backfills the new agreed price for existing accepted applications from the legacy gig-level price.
+- Replaces broad RLS policies and direct table privileges with least-privilege access.
+- Hides private profile phone/location fields behind authenticated profile RPCs.
+- Adds atomic RPCs for accepting/rejecting applications, changing gig status, completing/cancelling gigs, and editing gigs.
+- Removes the old payment trigger that forced transaction status to `pending` on every update.
+- Prevents deleting gig/application/payment history through ordinary client access.
+
+## Before applying
+1. Verify the live schema still matches `supabase/audit/live_schema_20261030.sql`.
+2. Run this migration on a disposable/local copy first.
+3. Test all RPCs with two different authenticated test users (poster and worker).
+4. Confirm the UI has been updated to use the RPCs and no longer writes protected columns directly.
+5. Only then consider a reviewed production migration, with a current backup and explicit approval.

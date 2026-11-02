@@ -40,7 +40,8 @@
 
 		const { data, error } = await supabase
 			.from('applications')
-			.select(`
+			.select(
+				`
 				id,
 				gig_id,
 				worker_id,
@@ -55,7 +56,8 @@
 					category,
 					status
 				)
-			`)
+			`
+			)
 			.eq('worker_id', currentUser.id)
 			.order('created_at', { ascending: false });
 
@@ -68,8 +70,8 @@
 		applications = (data ?? []).map((application) => ({
 			...application,
 			gig: Array.isArray(application.gigs)
-				? application.gigs[0] ?? null
-				: application.gigs ?? null
+				? (application.gigs[0] ?? null)
+				: (application.gigs ?? null)
 		})) as Application[];
 
 		loading = false;
@@ -110,10 +112,7 @@
 
 <svelte:head>
 	<title>My Applications | Kichele Link</title>
-	<meta
-		name="description"
-		content="View your gig applications and their status on Kichele Link."
-	/>
+	<meta name="description" content="View your gig applications and their status on Kichele Link." />
 </svelte:head>
 
 {#if loading}
@@ -155,13 +154,9 @@
 
 		<main class="mx-auto max-w-6xl px-6 py-10">
 			<div class="mb-8">
-				<p class="text-sm font-semibold uppercase tracking-wide text-blue-600">
-					WORKER SPACE
-				</p>
+				<p class="text-sm font-semibold tracking-wide text-blue-600 uppercase">WORKER SPACE</p>
 
-				<h1 class="mt-2 text-3xl font-bold text-slate-900">
-					My Applications
-				</h1>
+				<h1 class="mt-2 text-3xl font-bold text-slate-900">My Applications</h1>
 
 				<p class="mt-2 text-slate-600">
 					Track the gigs you have applied for and see whether you were selected.
@@ -178,13 +173,11 @@
 				<div class="rounded-2xl border bg-white p-10 text-center shadow-sm">
 					<div class="text-5xl">📋</div>
 
-					<h2 class="mt-4 text-xl font-bold text-slate-900">
-						No applications yet
-					</h2>
+					<h2 class="mt-4 text-xl font-bold text-slate-900">No applications yet</h2>
 
 					<p class="mx-auto mt-2 max-w-md text-slate-600">
-						You haven't applied for any gigs yet. Browse available gigs and send
-						your first application.
+						You haven't applied for any gigs yet. Browse available gigs and send your first
+						application.
 					</p>
 
 					<a
@@ -196,7 +189,7 @@
 				</div>
 			{:else}
 				<div class="space-y-5">
-					{#each applications as application}
+					{#each applications as application (application.id)}
 						<div class="rounded-2xl border bg-white p-6 shadow-sm">
 							<div class="flex flex-col justify-between gap-4 md:flex-row">
 								<div>
@@ -250,7 +243,7 @@
 
 							{#if application.message}
 								<div class="mt-5 rounded-lg bg-slate-50 p-4">
-									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+									<p class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
 										Your application message
 									</p>
 
@@ -262,9 +255,7 @@
 
 							{#if application.status === 'accepted'}
 								<div class="mt-5 rounded-lg border border-green-200 bg-green-50 p-4">
-									<p class="font-semibold text-ble-800">
-										🎉 Your application was accepted!
-									</p>
+									<p class="text-ble-800 font-semibold">🎉 Your application was accepted!</p>
 
 									<p class="mt-1 text-sm text-green-700">
 										This job will appear in your My Jobs section.
@@ -272,15 +263,11 @@
 								</div>
 							{:else if application.status === 'rejected'}
 								<div class="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
-									<p class="font-semibold text-red-800">
-										This application was not selected.
-									</p>
+									<p class="font-semibold text-red-800">This application was not selected.</p>
 								</div>
 							{:else}
 								<div class="mt-5 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
-									<p class="font-semibold text-yellow-800">
-										Your application is still pending.
-									</p>
+									<p class="font-semibold text-yellow-800">Your application is still pending.</p>
 
 									<p class="mt-1 text-sm text-yellow-700">
 										The gig poster has not made a final decision yet.

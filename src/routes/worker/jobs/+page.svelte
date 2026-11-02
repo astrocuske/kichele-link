@@ -1,312 +1,238 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { supabase } from '#lib/supabase/client.ts';
 	import type { User } from '@supabase/supabase-js';
+	import { supabase } from '#lib/supabase/client.ts';
 
-	type Job = {
-		application_id: number;
+	type Application = {
+		id: number;
 		gig_id: number;
+		worker_id: string;
 		status: string;
-		application_message: string | null;
-		applied_at: string;
-		gig: {
-			title: string;
-			description: string | null;
-			location: string | null;
-			budget: number | null;
-			agreed_price: number | null;
-			category: string | null;
-			status: string;
-			payment_status: string;
-		} | null;
+		agreed_price: number | null;
+		created_at: string;
+	};
+
+	type Gig = {
+		id: number;
+		title: string;
+		description: string;
+		location: string | null;
+		status: string;
+		created_at: string;
+	};
+
+	type Payment = {
+		application_id: number | null;
+		gig_id: number;
+		worker_id: string;
+		status: string;
+		mpesa_receipt_number: string | null;
 	};
 
 	let user = $state<User | null>(null);
-	let jobs = $state<Job[]>([]);
+	let jobs = $state<Array<{ application: Application; gig: Gig | undefined; payment?: Payment }>>(
+		[]
+	);
 	let loading = $state(true);
 	let errorMessage = $state('');
 
 	onMount(async () => {
-		const {
-			data: { user: currentUser }
-		} = await supabase.auth.getUser();
-
-		if (!currentUser) {
-			await goto('/login');
+		const { data: authData, error: authError } = await supabase.auth.getUser();
+		if (authError || !authData.user) {
+			goto('/login');
 			return;
 		}
+		user = authData.user;
+		await loadJobs();
+	});
 
-		user = currentUser;
+	async function loadJobs() {
+		if (!user) return;
+		loading = true;
+		errorMessage = '';
 
-		const { data: applications, error } = await supabase
+		const { data: appRows, error: appError } = await supabase
 			.from('applications')
-			.select(`
-				id,
-				gig_id,
-				status,
-				message,
-				created_at,
-				gigs (
-					title,
-					description,
-					location,
-					budget,
-					agreed_price,
-					category,
-					status,
-					payment_status
-				)
-			`)
-			.eq('worker_id', currentUser.id)
+			.select('id, gig_id, worker_id, status, agreed_price, created_at')
+			.eq('worker_id', user.id)
 			.eq('status', 'accepted')
 			.order('created_at', { ascending: false });
 
-		if (error) {
-			errorMessage = `Could not load your jobs: ${error.message}`;
+		if (appError) {
+			errorMessage = appError.message;
 			loading = false;
 			return;
 		}
 
-		jobs = (applications ?? []).map((application) => ({
-			application_id: application.id,
-			gig_id: application.gig_id,
-			status: application.status,
-			application_message: application.message,
-			applied_at: application.created_at,
-			gig: Array.isArray(application.gigs)
-				? application.gigs[0] ?? null
-				: application.gigs ?? null
-		})) as Job[];
+		const accepted = (appRows ?? []) as Application[];
+		if (accepted.length === 0) {
+			jobs = [];
+			loading = false;
+			return;
+		}
 
+		const gigIds = [...new Set(accepted.map((application) => application.gig_id))];
+		const { data: gigRows, error: gigsError } = await supabase
+			.from('gigs')
+			.select('id, title, description, location, status, created_at')
+			.in('id', gigIds);
+
+		if (gigsError) {
+			errorMessage = gigsError.message;
+			loading = false;
+			return;
+		}
+
+		const { data: paymentRows, error: paymentsError } = await supabase
+			.from('payment_transactions')
+			.select('application_id, gig_id, worker_id, status, mpesa_receipt_number')
+			.in('gig_id', gigIds);
+
+		if (paymentsError) {
+			errorMessage = paymentsError.message;
+			loading = false;
+			return;
+		}
+
+		jobs = accepted.map((application) => ({
+			application,
+			gig: (gigRows ?? []).find((gig) => gig.id === application.gig_id) as Gig | undefined,
+			payment: (paymentRows ?? []).find(
+				(payment) =>
+					payment.application_id === application.id ||
+					(payment.gig_id === application.gig_id && payment.worker_id === application.worker_id)
+			) as Payment | undefined
+		}));
 		loading = false;
-	});
+	}
 
 	async function signOut() {
 		await supabase.auth.signOut();
-		await goto('/login');
+		goto('/login');
 	}
 
-	function formatDate(date: string) {
-		return new Date(date).toLocaleDateString('en-KE', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric'
-		});
-	}
-
-	function formatAmount(amount: number | null) {
-		if (amount === null) return 'Not specified';
-
-		return `KSh ${amount.toLocaleString('en-KE')}`;
-	}
-
-	function paymentClass(status: string) {
-		switch (status.toLowerCase()) {
-			case 'paid':
-				return 'bg-green-100 text-green-700';
-
-			case 'failed':
-				return 'bg-red-100 text-red-700';
-
-			default:
-				return 'bg-yellow-100 text-yellow-700';
-		}
+	function money(value: number | null) {
+		return value === null ? 'Not recorded' : `KSh ${Number(value).toLocaleString('en-KE')}`;
 	}
 </script>
 
 <svelte:head>
 	<title>My Jobs | Kichele Link</title>
-	<meta
-		name="description"
-		content="View your accepted jobs and payment status on Kichele Link."
-	/>
+	<meta name="description" content="View your accepted jobs on Kichele Link." />
 </svelte:head>
 
-{#if loading}
-	<div class="flex min-h-screen items-center justify-center bg-slate-50">
-		<p class="text-slate-600">Loading your jobs...</p>
-	</div>
-{:else}
-	<div class="min-h-screen bg-slate-50">
-		<header class="border-b bg-white">
-			<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-				<div>
-					<a href="/" class="text-2xl font-bold text-blue-600">Kichele Link</a>
-					<p class="text-sm text-slate-500">My Jobs</p>
-				</div>
-
-				<div class="flex items-center gap-4">
-					<a
-						href="/worker"
-						class="hidden text-sm font-medium text-blue-600 hover:text-blue-700 sm:block"
-					>
-						Worker Dashboard
-					</a>
-
-					<a
-						href="/worker/applications"
-						class="hidden text-sm font-medium text-slate-600 hover:text-slate-900 md:block"
-					>
-						My Applications
-					</a>
-
-					{#if user}
-						<span class="hidden text-sm text-slate-600 lg:block">
-							{user.email}
-						</span>
-					{/if}
-
-					<button
-						onclick={signOut}
-						class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-					>
-						Sign out
-					</button>
-				</div>
+<div class="min-h-screen bg-slate-50">
+	<header class="border-b border-slate-200 bg-white">
+		<div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+			<div>
+				<a href="/" class="text-2xl font-black text-blue-600">Kichele Link</a>
+				<p class="text-sm text-slate-500">My Jobs</p>
 			</div>
-		</header>
-
-		<main class="mx-auto max-w-6xl px-6 py-10">
-			<div class="mb-8">
-				<p class="text-sm font-semibold uppercase tracking-wide text-blue-600">
-					WORKER SPACE
-				</p>
-
-				<h1 class="mt-2 text-3xl font-bold text-slate-900">
-					My Jobs
-				</h1>
-
-				<p class="mt-2 text-slate-600">
-					These are the gigs where your application has been accepted.
-				</p>
+			<div class="flex items-center gap-3">
+				<a
+					href="/worker/applications"
+					class="text-sm font-semibold text-slate-600 hover:text-blue-700">My Applications</a
+				>
+				<button
+					type="button"
+					onclick={signOut}
+					class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+					>Sign out</button
+				>
 			</div>
+		</div>
+	</header>
 
-			{#if errorMessage}
-				<div class="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
-					{errorMessage}
-				</div>
-			{/if}
+	<main class="mx-auto max-w-6xl px-6 py-10">
+		<div class="mb-8 flex items-center justify-between gap-3">
+			<div>
+				<p class="text-sm font-bold tracking-wide text-blue-600 uppercase">WORKER SPACE</p>
+				<h1 class="mt-2 text-3xl font-black text-slate-900">My Jobs</h1>
+				<p class="mt-2 text-slate-600">Gigs where your application has been accepted.</p>
+			</div>
+			<button
+				type="button"
+				onclick={loadJobs}
+				class="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700"
+				>Refresh</button
+			>
+		</div>
 
-			{#if jobs.length === 0}
-				<div class="rounded-2xl border bg-white p-10 text-center shadow-sm">
-					<div class="text-5xl">🛠️</div>
+		{#if errorMessage}
+			<p
+				role="alert"
+				class="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+			>
+				{errorMessage}
+			</p>
+		{/if}
 
-					<h2 class="mt-4 text-xl font-bold text-slate-900">
-						No accepted jobs yet
-					</h2>
-
-					<p class="mx-auto mt-2 max-w-md text-slate-600">
-						When a poster accepts one of your applications, the job will appear
-						here.
-					</p>
-
-					<a
-						href="/marketplace"
-						class="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
-					>
-						Find Gigs
-					</a>
-				</div>
-			{:else}
-				<div class="space-y-5">
-					{#each jobs as job}
-						<div class="rounded-2xl border bg-white p-6 shadow-sm">
-							<div class="flex flex-col justify-between gap-4 md:flex-row">
+		{#if loading}
+			<div class="rounded-2xl border border-slate-200 bg-white p-8 text-slate-500">
+				Loading your jobs...
+			</div>
+		{:else if jobs.length === 0}
+			<div class="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+				<h2 class="text-xl font-bold text-slate-900">No accepted jobs yet</h2>
+				<p class="mt-2 text-slate-500">Your accepted applications will appear here.</p>
+				<a
+					href="/gigs"
+					class="mt-5 inline-flex rounded-xl bg-blue-600 px-5 py-3 font-bold text-white"
+					>Find Gigs</a
+				>
+			</div>
+		{:else}
+			<div class="space-y-4">
+				{#each jobs as item (item.application.id)}
+					<article class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+						{#if item.gig}
+							<div class="flex flex-wrap items-center gap-2">
+								<span class="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700"
+									>Accepted</span
+								>
+								<span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"
+									>Gig: {item.gig.status}</span
+								>
+							</div>
+							<h2 class="mt-3 text-xl font-black text-slate-950">{item.gig.title}</h2>
+							<p class="mt-2 text-sm leading-6 whitespace-pre-wrap text-slate-600">
+								{item.gig.description}
+							</p>
+							<p class="mt-3 text-sm text-slate-500">
+								Location: {item.gig.location ?? 'Not specified'}
+							</p>
+							<div class="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2">
 								<div>
-									<div class="flex flex-wrap items-center gap-3">
-										<h2 class="text-xl font-bold text-slate-900">
-											{job.gig?.title ?? 'Job'}
-										</h2>
-
-										<span
-											class="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700"
-										>
-											Accepted
-										</span>
-									</div>
-
-									{#if job.gig?.category}
-										<p class="mt-2 text-sm font-medium text-blue-600">
-											{job.gig.category}
+									<p class="text-xs font-bold text-slate-400 uppercase">Your agreed price</p>
+									<p class="mt-1 font-black text-slate-900">
+										{money(item.application.agreed_price)}
+									</p>
+								</div>
+								<div>
+									<p class="text-xs font-bold text-slate-400 uppercase">Poster payment status</p>
+									<p class="mt-1 font-bold text-slate-900">
+										{item.payment?.status ?? 'No payment status recorded'}
+									</p>
+									{#if item.payment?.mpesa_receipt_number}
+										<p class="mt-1 text-xs text-slate-500">
+											Receipt: {item.payment.mpesa_receipt_number}
 										</p>
 									{/if}
 								</div>
-
-								<div class="text-left md:text-right">
-									<p class="text-sm text-slate-500">Agreed Price</p>
-
-									<p class="text-xl font-bold text-slate-900">
-										{formatAmount(job.gig?.agreed_price ?? null)}
-									</p>
-								</div>
 							</div>
-
-							{#if job.gig?.description}
-								<p class="mt-4 leading-6 text-slate-600">
-									{job.gig.description}
-								</p>
-							{/if}
-
-							<div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-								<div class="rounded-lg bg-slate-50 p-4">
-									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
-										Location
-									</p>
-
-									<p class="mt-1 font-medium text-slate-800">
-										{job.gig?.location ?? 'Not specified'}
-									</p>
-								</div>
-
-								<div class="rounded-lg bg-slate-50 p-4">
-									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
-										Applied
-									</p>
-
-									<p class="mt-1 font-medium text-slate-800">
-										{formatDate(job.applied_at)}
-									</p>
-								</div>
-
-								<div class="rounded-lg bg-slate-50 p-4">
-									<p class="text-xs font-semibold uppercase tracking-wide text-slate-500">
-										Payment
-									</p>
-
-									<span
-										class={`mt-1 inline-block rounded-full px-3 py-1 text-xs font-semibold capitalize ${paymentClass(job.gig?.payment_status ?? 'unpaid')}`}
-									>
-										{job.gig?.payment_status ?? 'unpaid'}
-									</span>
-								</div>
-							</div>
-
-							{#if job.gig?.payment_status === 'paid'}
-								<div class="mt-5 rounded-lg border border-green-200 bg-green-50 p-4">
-									<p class="font-semibold text-green-800">
-										Payment completed
-									</p>
-
-									<p class="mt-1 text-sm text-green-700">
-										The agreed payment for this job has been marked as paid.
-									</p>
-								</div>
-							{:else}
-								<div class="mt-5 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
-									<p class="font-semibold text-yellow-800">
-										Payment pending
-									</p>
-
-									<p class="mt-1 text-sm text-yellow-700">
-										The agreed price is {formatAmount(job.gig?.agreed_price ?? null)}.
-									</p>
-								</div>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</main>
-	</div>
-{/if}
+						{:else}
+							<p class="text-sm text-slate-500">The gig details are not currently available.</p>
+						{/if}
+					</article>
+				{/each}
+			</div>
+		{/if}
+		<p
+			class="mt-8 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-800"
+		>
+			The gig poster pays each accepted job separately through an official M-Pesa prompt. The status
+			above reflects that payment, and the receipt shows once the poster's payment is confirmed.
+		</p>
+	</main>
+</div>

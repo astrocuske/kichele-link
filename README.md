@@ -54,3 +54,7 @@ Create a production build:
 ```sh
 npm run build
 ```
+
+## Deployment
+
+This project is configured for deployment on Vercel using the SvelteKit Vercel adapter.
